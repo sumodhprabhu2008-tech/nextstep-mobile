@@ -1,15 +1,20 @@
 /**
  * portalApi.ts
  * Mobile API client for the live school portal integration.
- * Maps to backend routes under /api/integrations/grades/
  *
- * SECURITY NOTE: This file never stores passwords. Passwords are passed
- * directly to connectHac / connectPowerSchool and discarded after the
- * single HTTP request. They are never written to AsyncStorage, state,
- * or any persistent location.
+ * This version uses direct fetch instead of apiFetch so we can debug:
+ * - exact URL being called
+ * - whether auth token exists
+ * - backend status code
+ * - backend response body
+ *
+ * SECURITY NOTE:
+ * This file never stores portal passwords. Passwords are passed only in the
+ * connect request body and are discarded immediately after the request.
  */
 
-import { apiFetch } from '../utils/api'
+import { API_BASE_URL } from '../constants/api'
+import { getToken } from '../utils/auth'
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -36,8 +41,8 @@ export interface PortalStatus {
   connected: boolean
   systemType: 'HAC' | 'PowerSchool' | null
   districtUrl: string | null
-  lastSynced: string | null   // ISO date string or null
-  sessionExpiresIn: number    // seconds remaining, 0 if not connected
+  lastSynced: string | null
+  sessionExpiresIn: number
 }
 
 export interface ConnectResult {
@@ -51,114 +56,176 @@ export interface PortalGpa {
   systemType: 'HAC' | 'PowerSchool'
 }
 
+// ── Internal request helper ───────────────────────────────────────────────────
+
+async function portalRequest<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await getToken()
+
+  const normalizedBaseUrl = API_BASE_URL.endsWith('/')
+    ? API_BASE_URL.slice(0, -1)
+    : API_BASE_URL
+
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  const url = `${normalizedBaseUrl}${normalizedPath}`
+
+  console.log('[PORTAL API] URL:', url)
+  console.log('[PORTAL API] METHOD:', options.method ?? 'GET')
+  console.log('[PORTAL API] HAS TOKEN:', Boolean(token))
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> | undefined),
+  }
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  let response: Response
+
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers,
+    })
+  } catch (error: unknown) {
+    console.log('[PORTAL API] FETCH FAILED:', error)
+
+    throw new Error(
+      `Network request failed. The app could not reach the backend. Check API_BASE_URL in src/constants/api.ts. Current URL: ${url}`,
+    )
+  }
+
+  const text = await response.text()
+
+  console.log('[PORTAL API] STATUS:', response.status)
+  console.log('[PORTAL API] RESPONSE TEXT:', text)
+
+  let json: any = {}
+
+  try {
+    json = text ? JSON.parse(text) : {}
+  } catch {
+    json = { raw: text }
+  }
+
+  if (!response.ok) {
+    const message =
+      typeof json.error === 'string'
+        ? json.error
+        : json.error?.message || json.message || response.statusText
+
+    throw new Error(`${response.status}: ${message}`)
+  }
+
+  return json as T
+}
+
 // ── Portal connection ─────────────────────────────────────────────────────────
 
-/**
- * Connect to a HAC (Home Access Center) school portal.
- *
- * @param baseUrl   Full URL to the district HAC portal, e.g. "https://hac.katyisd.org"
- * @param username  Student's HAC username
- * @param password  Student's HAC password — NOT stored after this call returns
- *
- * Calls: POST /api/integrations/grades/hac/login
- */
 export async function connectHac(
   baseUrl: string,
   username: string,
-  password: string
+  password: string,
 ): Promise<ConnectResult> {
-  const res = await apiFetch<{ data: { sessionToken: string; systemType: string } }>(
-    '/integrations/grades/hac/login',
-    {
-      method: 'POST',
-      body: JSON.stringify({ baseUrl, username, password }),
+  console.log('[PORTAL API] connectHac called')
+  console.log('[PORTAL API] HAC baseUrl:', baseUrl)
+  console.log('[PORTAL API] HAC username exists:', Boolean(username))
+  console.log('[PORTAL API] HAC password exists:', Boolean(password))
+
+  const res = await portalRequest<{
+    data: {
+      sessionToken?: string
+      systemType?: string
     }
-  )
+  }>('/integrations/grades/hac/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      baseUrl,
+      username,
+      password,
+    }),
+  })
+
   return {
-    connected: !!res.data.sessionToken,
+    connected: Boolean(res.data?.sessionToken),
     systemType: 'HAC',
   }
 }
 
-/**
- * Connect to a PowerSchool portal.
- *
- * @param baseUrl   Full URL to the district PowerSchool portal
- * @param username  Student's PowerSchool username
- * @param password  Student's PowerSchool password — NOT stored after this call returns
- *
- * Calls: POST /api/integrations/grades/powerschool/login
- */
 export async function connectPowerSchool(
   baseUrl: string,
   username: string,
-  password: string
+  password: string,
 ): Promise<ConnectResult> {
-  const res = await apiFetch<{ data: { sessionToken: string; systemType: string } }>(
-    '/integrations/grades/powerschool/login',
-    {
-      method: 'POST',
-      body: JSON.stringify({ baseUrl, username, password }),
+  console.log('[PORTAL API] connectPowerSchool called')
+  console.log('[PORTAL API] PowerSchool baseUrl:', baseUrl)
+  console.log('[PORTAL API] PowerSchool username exists:', Boolean(username))
+  console.log('[PORTAL API] PowerSchool password exists:', Boolean(password))
+
+  const res = await portalRequest<{
+    data: {
+      sessionToken?: string
+      systemType?: string
     }
-  )
+  }>('/integrations/grades/powerschool/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      baseUrl,
+      username,
+      password,
+    }),
+  })
+
   return {
-    connected: !!res.data.sessionToken,
+    connected: Boolean(res.data?.sessionToken),
     systemType: 'PowerSchool',
   }
 }
 
 // ── Status ────────────────────────────────────────────────────────────────────
 
-/**
- * Check whether there is an active school portal session for this user.
- * Call this on app launch and when returning to the Grade Portal screen.
- *
- * Calls: GET /api/integrations/grades/status
- */
 export async function getPortalStatus(): Promise<PortalStatus> {
-  const res = await apiFetch<{ data: PortalStatus }>('/integrations/grades/status')
+  const res = await portalRequest<{ data: PortalStatus }>(
+    '/integrations/grades/status',
+  )
+
   return res.data
 }
 
 // ── Grade data ────────────────────────────────────────────────────────────────
 
-/**
- * Fetch current normalized grades from the connected school portal.
- * Only call this after confirming getPortalStatus().connected === true.
- *
- * Calls: GET /api/integrations/grades/current
- * Returns: NormalizedCourse[] (same shape regardless of HAC or PowerSchool)
- */
 export async function getCurrentPortalGrades(): Promise<NormalizedCourse[]> {
-  const res = await apiFetch<{ data: { systemType: string; grades: NormalizedCourse[] } }>(
-    '/integrations/grades/current'
-  )
+  const res = await portalRequest<{
+    data: {
+      systemType: string
+      grades: NormalizedCourse[]
+    }
+  }>('/integrations/grades/current')
+
   return res.data.grades ?? []
 }
 
-/**
- * Fetch the computed GPA from the connected portal's current grades.
- * Only call after confirming getPortalStatus().connected === true.
- *
- * Calls: GET /api/integrations/grades/gpa
- */
 export async function getPortalGpa(): Promise<PortalGpa> {
-  const res = await apiFetch<{ data: PortalGpa }>('/integrations/grades/gpa')
+  const res = await portalRequest<{ data: PortalGpa }>(
+    '/integrations/grades/gpa',
+  )
+
   return res.data
 }
 
 // ── Disconnect ────────────────────────────────────────────────────────────────
 
-/**
- * Disconnect from the school portal and clear the server-side session.
- * After calling this, getPortalStatus() will return connected: false.
- *
- * Calls: DELETE /api/integrations/grades/session
- */
 export async function disconnectPortal(): Promise<{ disconnected: boolean }> {
-  const res = await apiFetch<{ data: { disconnected: boolean } }>(
+  const res = await portalRequest<{ data: { disconnected: boolean } }>(
     '/integrations/grades/session',
-    { method: 'DELETE' }
+    {
+      method: 'DELETE',
+    },
   )
+
   return res.data
 }

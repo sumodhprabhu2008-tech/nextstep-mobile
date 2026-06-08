@@ -75,7 +75,7 @@ const KNOWN_DISTRICTS: string[] = ['katyisd', 'houstonisd', 'cfisd', 'alief', 'f
 export default function PortalConnectScreen(): React.JSX.Element {
   const navigation = useNavigation()
 
-  // Form state (logic unchanged)
+  // Form state
   const [portalType, setPortalType] = useState<PortalType>('HAC')
   const [districtUrl, setDistrictUrl] = useState('')
   const [username, setUsername] = useState('')
@@ -95,10 +95,12 @@ export default function PortalConnectScreen(): React.JSX.Element {
   // Derived
   const isConnecting = connectionState.status === 'connecting'
   const selectedPortal = PORTAL_OPTIONS.find(p => p.type === portalType)!
-  const isAnyFieldEmpty = !districtUrl.trim() || !username.trim() || !password
-  const isButtonDisabled = isConnecting || connectionState.status === 'success' || isAnyFieldEmpty
 
-  // ── Logic (unchanged from original) ─────────────────────────────────────────
+  // Keep this false unless connecting/success so the button can run validation/debug logs.
+  // Empty fields are still handled by validate().
+  const isButtonDisabled = isConnecting || connectionState.status === 'success'
+
+  // ── Logic ───────────────────────────────────────────────────────────────────
 
   const validate = useCallback((): string | null => {
     const url = districtUrl.trim()
@@ -116,8 +118,12 @@ export default function PortalConnectScreen(): React.JSX.Element {
   }, [districtUrl, username, password])
 
   const handleConnect = useCallback(async (): Promise<void> => {
+    console.log('[PORTAL CONNECT] button pressed')
+
     const validationError = validate()
+
     if (validationError) {
+      console.log('[PORTAL CONNECT] validation failed:', validationError)
       setConnectionState({ status: 'error', message: validationError })
       return
     }
@@ -126,37 +132,45 @@ export default function PortalConnectScreen(): React.JSX.Element {
 
     const url = districtUrl.trim()
     const user = username.trim()
-    // Password used once in the API call, then cleared on success
     const pass = password
+
+    console.log('[PORTAL CONNECT] validation passed')
+    console.log('[PORTAL CONNECT] portal type:', portalType)
+    console.log('[PORTAL CONNECT] district URL:', url)
+    console.log('[PORTAL CONNECT] username exists:', Boolean(user))
+    console.log('[PORTAL CONNECT] password exists:', Boolean(pass))
 
     try {
       if (portalType === 'HAC') {
+        console.log('[PORTAL CONNECT] calling connectHac')
         await connectHac(url, user, pass)
+        console.log('[PORTAL CONNECT] connectHac completed')
       } else {
+        console.log('[PORTAL CONNECT] calling connectPowerSchool')
         await connectPowerSchool(url, user, pass)
+        console.log('[PORTAL CONNECT] connectPowerSchool completed')
       }
 
-      // Success — clear password from local state immediately
       setPassword('')
       setConnectionState({ status: 'success', portalType })
 
-      // Navigate back after a short delay so the user sees the success message
       setTimeout(() => {
         navigation.goBack()
       }, 1800)
     } catch (err: unknown) {
-      // Never log the password in error messages
+      console.log('[PORTAL CONNECT] failed:', err)
+
       const message =
         err instanceof Error
           ? err.message.replace(pass, '[hidden]')
           : 'Connection failed. Check your URL and credentials and try again.'
-      // Clear password on error — student should re-enter it
+
       setPassword('')
       setConnectionState({ status: 'error', message })
     }
   }, [validate, districtUrl, username, password, portalType, navigation])
 
-  // ── New UI handler ───────────────────────────────────────────────────────────
+  // ── UI handler ───────────────────────────────────────────────────────────────
 
   const handleUrlBlur = useCallback((): void => {
     setFocused(null)
@@ -178,7 +192,6 @@ export default function PortalConnectScreen(): React.JSX.Element {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-
           {/* ── 1. Portal type selector ── */}
           <Text variant="label" style={styles.sectionLabel}>Portal Type</Text>
           <View style={styles.portalSelectorRow}>

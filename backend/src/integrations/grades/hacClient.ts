@@ -3,7 +3,6 @@
  * Adapted from https://github.com/ruskcoder/gradexis-api (hac/ and hac-v2/ folders).
  * All Gradexis-specific branding, push notifications, and referral logic removed.
  */
-import https from 'https'
 import axios from 'axios'
 import { wrapper } from 'axios-cookiejar-support'
 import { CookieJar } from 'tough-cookie'
@@ -51,21 +50,14 @@ export interface HACTranscript {
 
 // ── Session helpers ────────────────────────────────────────────────────────────
 
-function makeHttpsAgent(): https.Agent {
-  return new https.Agent({
-    rejectUnauthorized: true,
-    keepAlive: true,
-    timeout: 20_000,
-  })
-}
 
 function makeAxiosSession() {
   const jar = new CookieJar()
+
   return {
     jar,
     http: wrapper(
       axios.create({
-        httpsAgent: makeHttpsAgent(),
         withCredentials: true,
         jar,
         timeout: 20_000,
@@ -92,9 +84,9 @@ function deserializeJar(raw: string): CookieJar {
 
 function restoreSession(stored: StoredSession) {
   const jar = deserializeJar(stored.sessionData)
+
   const http = wrapper(
     axios.create({
-      httpsAgent: makeHttpsAgent(),
       withCredentials: true,
       jar,
       timeout: 20_000,
@@ -108,6 +100,7 @@ function restoreSession(stored: StoredSession) {
       },
     })
   )
+
   return { jar, http }
 }
 
