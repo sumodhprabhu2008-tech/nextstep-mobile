@@ -359,43 +359,32 @@ export async function loginHAC(
       throw new Error('Invalid credentials — HAC rejected the username or password')
     }
 
-    // Content-based check: does the POST response still contain a login form?
-    // This is more reliable than URL-tracking since responseUrl can be unreliable
-    // in serverless environments.
-    const postHasLoginForm = $post("input[name='__RequestVerificationToken']").length > 0
-      || $post("input[name='LogOnDetails.UserName']").length > 0
-      || $post("input[name='LogOnDetails_UserName']").length > 0
+    // Primary check: successful HAC login always sets the .ASPXAUTH cookie.
+    // A failed login only sets ASP.NET_SessionId. Check the jar right now.
+    const hacDomainCheck = link.replace(/\/$/, '')
+    const cookiesAfterPost = jar.getCookiesSync(hacDomainCheck)
+    const hasAuthCookie = cookiesAfterPost.some(c => c.key === '.ASPXAUTH')
 
-    if (postHasLoginForm) {
-      // Still showing login form — POST either failed or redirected back.
-      // Verify by fetching Home.aspx and checking if IT also shows a login form.
+    console.log('[HAC CLIENT] Cookies after POST:', cookiesAfterPost.map(c => c.key))
+
+    if (!hasAuthCookie) {
+      // No auth cookie — login failed. Double-check via Home.aspx content as fallback.
       const homeUrl = `${link}HomeAccess/Home.aspx`
-      console.log('[HAC CLIENT] POST returned login form; verifying via Home.aspx:', homeUrl)
-
       const homeRes = await http.get(homeUrl, {
         headers: { Referer: loginPostUrl },
         validateStatus: s => s < 500,
       })
-
       const homeBody = homeRes.data as string
       const $home = cheerio.load(homeBody)
       const homeHasLoginForm = $home("input[name='__RequestVerificationToken']").length > 0
-        || $home("input[name='LogOnDetails.UserName']").length > 0
-        || $home("input[name='LogOnDetails_UserName']").length > 0
-      // Also check URL in case follow-redirects does provide it
-      const homeFinalUrl: string =
-        (homeRes.request as { res?: { responseUrl?: string } })?.res?.responseUrl ?? ''
-      const homeRedirectedToLoginUrl =
-        homeFinalUrl.includes('Account/LogOn') || homeFinalUrl.includes('Account/Login')
+      const homeHasAuthCookie = jar.getCookiesSync(hacDomainCheck).some(c => c.key === '.ASPXAUTH')
 
-      console.log('[HAC CLIENT] Home.aspx check', {
-        status: homeRes.status,
-        finalUrl: homeFinalUrl,
+      console.log('[HAC CLIENT] Home.aspx fallback check', {
         hasLoginForm: homeHasLoginForm,
-        urlRedirectedToLogin: homeRedirectedToLoginUrl,
+        hasAuthCookieAfterHome: homeHasAuthCookie,
       })
 
-      if (homeHasLoginForm || homeRedirectedToLoginUrl) {
+      if (homeHasLoginForm || !homeHasAuthCookie) {
         throw new Error('Invalid credentials — HAC rejected the username or password')
       }
     }
