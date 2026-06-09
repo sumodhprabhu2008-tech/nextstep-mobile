@@ -6,12 +6,14 @@
 import axios, { type AxiosInstance } from 'axios'
 import { CookieJar } from 'tough-cookie'
 
-// Dynamic import because axios-cookiejar-support v7 is ESM-only
+// axios-cookiejar-support v7 is ESM-only. esbuild converts `await import()` to
+// `require()` in CJS bundles, which fails. Use indirect Function() to prevent that.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _wrapper: ((instance: any) => AxiosInstance) | null = null
 async function getWrapper(): Promise<(instance: any) => AxiosInstance> {
   if (_wrapper) return _wrapper
-  const mod = await import('axios-cookiejar-support')
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const mod = await (Function('return import("axios-cookiejar-support")')() as Promise<{ wrapper: (instance: any) => AxiosInstance }>)
   _wrapper = mod.wrapper
   return _wrapper
 }
