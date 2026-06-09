@@ -38,6 +38,7 @@
     "@types/node": "^20.17.10",
     "@types/supertest": "^7.2.0",
     "@types/tough-cookie": "^4.0.5",
+    "@vercel/node": "^5.8.14",
     "prisma": "^5.22.0",
     "supertest": "^7.2.2",
     "ts-node": "^10.9.2",
