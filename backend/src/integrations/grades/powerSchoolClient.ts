@@ -3,9 +3,18 @@
  * Adapted from https://github.com/ruskcoder/gradexis-api (powerschool/ folder).
  * All Gradexis-specific branding removed.
  */
-import axios from 'axios'
-import { wrapper } from 'axios-cookiejar-support'
+import axios, { type AxiosInstance } from 'axios'
 import { CookieJar } from 'tough-cookie'
+
+// Dynamic import because axios-cookiejar-support v7 is ESM-only
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _wrapper: ((instance: any) => AxiosInstance) | null = null
+async function getWrapper(): Promise<(instance: any) => AxiosInstance> {
+  if (_wrapper) return _wrapper
+  const mod = await import('axios-cookiejar-support')
+  _wrapper = mod.wrapper
+  return _wrapper
+}
 import * as cheerio from 'cheerio'
 import { saveSession, getSessionByToken, StoredSession } from './sessionStore'
 
@@ -23,7 +32,8 @@ export interface PSStudentInfo {
 
 // ── Session helpers ────────────────────────────────────────────────────────────
 
-function makeAxiosSession() {
+async function makeAxiosSession(): Promise<{ jar: CookieJar; http: AxiosInstance }> {
+  const wrapper = await getWrapper()
   const jar = new CookieJar()
   return {
     jar,
@@ -42,7 +52,8 @@ function makeAxiosSession() {
   }
 }
 
-function restoreSession(stored: StoredSession) {
+async function restoreSession(stored: StoredSession): Promise<{ jar: CookieJar; http: AxiosInstance }> {
+  const wrapper = await getWrapper()
   const jar = CookieJar.fromJSON(JSON.parse(stored.sessionData)) as CookieJar
   const http = wrapper(
     axios.create({
@@ -79,7 +90,7 @@ export async function loginPowerSchool(
   userId: number
 ): Promise<string> {
   const link = normalizeBaseUrl(baseUrl)
-  const { jar, http } = makeAxiosSession()
+  const { jar, http } = await makeAxiosSession()
 
   const loginUrl = `${link}guardian/home.html`
 
@@ -134,7 +145,7 @@ export async function getGrades(sessionToken: string): Promise<PSClass[]> {
   const stored = getSessionByToken(sessionToken)
   if (!stored) throw new Error('School session expired or not found — please log in again')
 
-  const { http } = restoreSession(stored)
+  const { http } = await restoreSession(stored)
   const link = stored.baseUrl
 
   const res = await http.get(`${link}guardian/home.html`)
@@ -168,7 +179,7 @@ export async function getTranscript(sessionToken: string): Promise<object> {
   const stored = getSessionByToken(sessionToken)
   if (!stored) throw new Error('School session expired or not found — please log in again')
 
-  const { http } = restoreSession(stored)
+  const { http } = await restoreSession(stored)
   const link = stored.baseUrl
 
   // PowerSchool transcript is on the main grades page — return all term data

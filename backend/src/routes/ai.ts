@@ -5,9 +5,11 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-})
+function getAnthropic(): Anthropic {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set')
+  return new Anthropic({ apiKey })
+}
 
 router.post('/chat', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   if (req.userId === undefined) {
@@ -57,7 +59,7 @@ College goal: ${profile?.futureDecision ?? 'not specified'}
 
 Be encouraging, concise, and specific. Only reference the student data above — never invent numbers or facts. Keep responses under 3 sentences.`
 
-    const aiResponse = await anthropic.messages.create({
+    const aiResponse = await getAnthropic().messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: systemPrompt,
@@ -105,7 +107,7 @@ router.get('/study-plan', requireAuth, async (req: AuthRequest, res: Response): 
       estimatedMinutes: a.estimatedMinutes,
     }))
 
-    const aiResponse = await anthropic.messages.create({
+    const aiResponse = await getAnthropic().messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 2048,
       tools: [

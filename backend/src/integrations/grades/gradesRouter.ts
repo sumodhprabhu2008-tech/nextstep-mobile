@@ -14,7 +14,13 @@ import {
   getTranscript as psTranscript,
 } from './powerSchoolClient'
 import { buildSessionWithCLCookie } from './classLinkHelper'
-import { getSessionByUserId, deleteSessionByUserId } from './sessionStore'
+import {
+  saveSession,
+  getSessionByUserId,
+  getSessionByToken,
+  deleteSessionByUserId,
+  type SchoolSystemType,
+} from './sessionStore'
 import { prisma } from '../../lib/prisma'
 import { normalizeHacGrades, normalizePsGrades } from './normalizeGrades'
 
@@ -152,12 +158,25 @@ function sendError(res: Response, label: string, err: unknown, fallbackCode: str
   })
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// ── Session helpers ────────────────────────────────────────────────────────────
+// On Vercel serverless, the in-memory sessionStore is wiped on cold starts.
+// This helper checks memory first, then falls back to Neon (SchoolConnection.sessionData).
 
-function requireSession(userId: number, res: Response): ReturnType<typeof getSessionByUserId> {
-  const entry = getSessionByUserId(userId)
+async function getOrRestoreSession(
+  userId: number,
+  res: Response,
+): Promise<ReturnType<typeof getSessionByUserId>> {
+  // Fast path — in-memory hit (warm invocation)
+  const memEntry = getSessionByUserId(userId)
+  if (memEntry) return memEntry
 
-  if (!entry) {
+  // Cold-start path — restore from DB
+  const conn = await prisma.schoolConnection.findUnique({
+    where: { userId },
+    select: { sessionData: true, systemType: true, districtUrl: true },
+  })
+
+  if (!conn?.sessionData) {
     res.status(401).json({
       data: null,
       error: {
@@ -165,11 +184,12 @@ function requireSession(userId: number, res: Response): ReturnType<typeof getSes
         message: 'No active school session. Please log in to your school portal first.',
       },
     })
-
     return null
   }
 
-  return entry
+  // Re-hydrate into memory for the duration of this invocation
+  saveSession(userId, conn.systemType as SchoolSystemType, conn.districtUrl, conn.sessionData)
+  return getSessionByUserId(userId)
 }
 
 // ── Routes ─────────────────────────────────────────────────────────────────────
@@ -229,17 +249,21 @@ router.post('/hac/login', async (req: AuthRequest, res: Response): Promise<void>
       hasSessionToken: Boolean(sessionToken),
     })
 
+    // Persist the CookieJar to Neon so cold-start invocations can restore the session
+    const memSession = getSessionByToken(sessionToken)
     await prisma.schoolConnection.upsert({
       where: { userId },
       update: {
         systemType: 'HAC',
         districtUrl: resolvedBaseUrl,
+        sessionData: memSession?.sessionData ?? null,
         lastSynced: new Date(),
       },
       create: {
         userId,
         systemType: 'HAC',
         districtUrl: resolvedBaseUrl,
+        sessionData: memSession?.sessionData ?? null,
       },
     })
 
@@ -288,17 +312,20 @@ router.post('/powerschool/login', async (req: AuthRequest, res: Response): Promi
   try {
     const sessionToken = await loginPowerSchool(baseUrl, username, password, userId)
 
+    const memSession = getSessionByToken(sessionToken)
     await prisma.schoolConnection.upsert({
       where: { userId },
       update: {
         systemType: 'PowerSchool',
         districtUrl: baseUrl,
+        sessionData: memSession?.sessionData ?? null,
         lastSynced: new Date(),
       },
       create: {
         userId,
         systemType: 'PowerSchool',
         districtUrl: baseUrl,
+        sessionData: memSession?.sessionData ?? null,
       },
     })
 
@@ -316,7 +343,7 @@ router.post('/powerschool/login', async (req: AuthRequest, res: Response): Promi
 })
 
 router.get('/current', async (req: AuthRequest, res: Response): Promise<void> => {
-  const entry = requireSession(req.userId!, res)
+  const entry = await getOrRestoreSession(req.userId!, res)
   if (!entry) return
 
   try {
@@ -347,7 +374,7 @@ router.get('/current', async (req: AuthRequest, res: Response): Promise<void> =>
 })
 
 router.get('/transcript', async (req: AuthRequest, res: Response): Promise<void> => {
-  const entry = requireSession(req.userId!, res)
+  const entry = await getOrRestoreSession(req.userId!, res)
   if (!entry) return
 
   try {
@@ -371,7 +398,7 @@ router.get('/transcript', async (req: AuthRequest, res: Response): Promise<void>
 })
 
 router.get('/schedule', async (req: AuthRequest, res: Response): Promise<void> => {
-  const entry = requireSession(req.userId!, res)
+  const entry = await getOrRestoreSession(req.userId!, res)
   if (!entry) return
 
   if (entry.session.systemType !== 'HAC') {
@@ -400,7 +427,7 @@ router.get('/schedule', async (req: AuthRequest, res: Response): Promise<void> =
 })
 
 router.get('/gpa', async (req: AuthRequest, res: Response): Promise<void> => {
-  const entry = requireSession(req.userId!, res)
+  const entry = await getOrRestoreSession(req.userId!, res)
   if (!entry) return
 
   try {
@@ -428,7 +455,7 @@ router.get('/gpa', async (req: AuthRequest, res: Response): Promise<void> => {
 })
 
 router.get('/info', async (req: AuthRequest, res: Response): Promise<void> => {
-  const entry = requireSession(req.userId!, res)
+  const entry = await getOrRestoreSession(req.userId!, res)
   if (!entry) return
 
   if (entry.session.systemType !== 'HAC') {
@@ -454,8 +481,15 @@ router.get('/info', async (req: AuthRequest, res: Response): Promise<void> => {
   }
 })
 
-router.delete('/session', (req: AuthRequest, res: Response): void => {
-  deleteSessionByUserId(req.userId!)
+router.delete('/session', async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.userId!
+  deleteSessionByUserId(userId)
+
+  // Clear persisted session from DB so cold-start invocations won't restore it
+  await prisma.schoolConnection.updateMany({
+    where: { userId },
+    data: { sessionData: null },
+  })
 
   res.json({
     data: {
@@ -469,14 +503,15 @@ router.get('/status', async (req: AuthRequest, res: Response): Promise<void> => 
 
   const entry = getSessionByUserId(userId)
   const connection = await prisma.schoolConnection.findUnique({
-    where: {
-      userId,
-    },
+    where: { userId },
   })
+
+  // A session is "connected" if there's an active in-memory session OR a persisted sessionData in DB
+  const connected = Boolean(entry) || Boolean(connection?.sessionData)
 
   res.json({
     data: {
-      connected: Boolean(entry),
+      connected,
       systemType: entry?.session.systemType ?? connection?.systemType ?? null,
       districtUrl: entry?.session.baseUrl ?? connection?.districtUrl ?? null,
       lastSynced: connection?.lastSynced ?? null,

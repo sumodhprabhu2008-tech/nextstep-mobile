@@ -3,9 +3,18 @@
  * Debug-friendly version for NextStep local beta.
  */
 
-import axios from 'axios'
-import { wrapper } from 'axios-cookiejar-support'
+import axios, { type AxiosInstance } from 'axios'
 import { CookieJar } from 'tough-cookie'
+
+// Dynamic import because axios-cookiejar-support v7 is ESM-only
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _wrapper: ((instance: any) => AxiosInstance) | null = null
+async function getWrapper(): Promise<(instance: any) => AxiosInstance> {
+  if (_wrapper) return _wrapper
+  const mod = await import('axios-cookiejar-support')
+  _wrapper = mod.wrapper
+  return _wrapper
+}
 import * as cheerio from 'cheerio'
 import { saveSession, getSessionByToken, StoredSession } from './sessionStore'
 
@@ -121,7 +130,8 @@ function throwDetailedAxiosError(label: string, err: unknown): never {
 
 // ── Session helpers ───────────────────────────────────────────────────────────
 
-function makeAxiosSession() {
+async function makeAxiosSession(): Promise<{ jar: CookieJar; http: AxiosInstance }> {
+  const wrapper = await getWrapper()
   const jar = new CookieJar()
 
   const client = axios.create({
@@ -152,7 +162,8 @@ function deserializeJar(raw: string): CookieJar {
   return CookieJar.fromJSON(JSON.parse(raw)) as CookieJar
 }
 
-function restoreSession(stored: StoredSession) {
+async function restoreSession(stored: StoredSession): Promise<{ jar: CookieJar; http: AxiosInstance }> {
+  const wrapper = await getWrapper()
   const jar = deserializeJar(stored.sessionData)
 
   const client = axios.create({
@@ -205,7 +216,7 @@ export async function loginHAC(
   clsessionCookie?: string,
 ): Promise<string> {
   const link = normalizeBaseUrl(baseUrl)
-  const { jar, http } = makeAxiosSession()
+  const { jar, http } = await makeAxiosSession()
 
   console.log('[HAC CLIENT] loginHAC started', {
     baseUrl,
@@ -411,7 +422,7 @@ export async function getGrades(sessionToken: string): Promise<HACClass[]> {
   const stored = getSessionByToken(sessionToken)
   if (!stored) throw new Error('School session expired or not found — please log in again')
 
-  const { http } = restoreSession(stored)
+  const { http } = await restoreSession(stored)
   const link = stored.baseUrl
 
   const res = await http.get(`${link}HomeAccess/Content/Student/Assignments.aspx`)
@@ -491,7 +502,7 @@ export async function getTranscript(sessionToken: string): Promise<HACTranscript
   const stored = getSessionByToken(sessionToken)
   if (!stored) throw new Error('School session expired or not found — please log in again')
 
-  const { http } = restoreSession(stored)
+  const { http } = await restoreSession(stored)
   const link = stored.baseUrl
 
   const res = await http.get(`${link}HomeAccess/Content/Student/Transcript.aspx`)
@@ -538,7 +549,7 @@ export async function getSchedule(sessionToken: string): Promise<object[]> {
   const stored = getSessionByToken(sessionToken)
   if (!stored) throw new Error('School session expired or not found — please log in again')
 
-  const { http } = restoreSession(stored)
+  const { http } = await restoreSession(stored)
   const link = stored.baseUrl
 
   const res = await http.get(`${link}HomeAccess/Content/Student/Classes.aspx`)
@@ -571,7 +582,7 @@ export async function getStudentInfo(sessionToken: string): Promise<HACStudentIn
   const stored = getSessionByToken(sessionToken)
   if (!stored) throw new Error('School session expired or not found — please log in again')
 
-  const { http } = restoreSession(stored)
+  const { http } = await restoreSession(stored)
   const link = stored.baseUrl
 
   const res = await http.get(`${link}HomeAccess/Content/Student/Registration.aspx`)
