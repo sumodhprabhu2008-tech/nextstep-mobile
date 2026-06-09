@@ -3,20 +3,8 @@
  * Debug-friendly version for NextStep local beta.
  */
 
-import axios, { type AxiosInstance } from 'axios'
+import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from 'axios'
 import { CookieJar } from 'tough-cookie'
-
-// axios-cookiejar-support v7 is ESM-only. esbuild converts `await import()` to
-// `require()` in CJS bundles, which fails. Use indirect Function() to prevent that.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _wrapper: ((instance: any) => AxiosInstance) | null = null
-async function getWrapper(): Promise<(instance: any) => AxiosInstance> {
-  if (_wrapper) return _wrapper
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const mod = await (Function('return import("axios-cookiejar-support")')() as Promise<{ wrapper: (instance: any) => AxiosInstance }>)
-  _wrapper = mod.wrapper
-  return _wrapper
-}
 import * as cheerio from 'cheerio'
 import { saveSession, getSessionByToken, StoredSession } from './sessionStore'
 
@@ -132,13 +120,33 @@ function throwDetailedAxiosError(label: string, err: unknown): never {
 
 // ── Session helpers ───────────────────────────────────────────────────────────
 
-async function makeAxiosSession(): Promise<{ jar: CookieJar; http: AxiosInstance }> {
-  const wrapper = await getWrapper()
+function attachCookieJar(client: AxiosInstance, jar: CookieJar): void {
+  client.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+    const url = config.url ?? ''
+    const cookies = await jar.getCookies(url)
+    if (cookies.length > 0) {
+      config.headers['Cookie'] = cookies.map(c => `${c.key}=${c.value}`).join('; ')
+    }
+    return config
+  })
+
+  client.interceptors.response.use(async response => {
+    const setCookieHeader = response.headers['set-cookie']
+    const url = (response.config as { url?: string }).url ?? ''
+    if (setCookieHeader) {
+      const entries = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader]
+      for (const raw of entries) {
+        try { await jar.setCookie(raw, url) } catch { /* ignore invalid cookies */ }
+      }
+    }
+    return response
+  })
+}
+
+function makeAxiosSession(): { jar: CookieJar; http: AxiosInstance } {
   const jar = new CookieJar()
 
   const client = axios.create({
-    withCredentials: true,
-    jar,
     timeout: 30_000,
     maxRedirects: 10,
     validateStatus: status => status >= 200 && status < 500,
@@ -150,10 +158,8 @@ async function makeAxiosSession(): Promise<{ jar: CookieJar; http: AxiosInstance
     },
   })
 
-  return {
-    jar,
-    http: wrapper(client),
-  }
+  attachCookieJar(client, jar)
+  return { jar, http: client }
 }
 
 function serializeJar(jar: CookieJar): string {
@@ -164,13 +170,10 @@ function deserializeJar(raw: string): CookieJar {
   return CookieJar.fromJSON(JSON.parse(raw)) as CookieJar
 }
 
-async function restoreSession(stored: StoredSession): Promise<{ jar: CookieJar; http: AxiosInstance }> {
-  const wrapper = await getWrapper()
+function restoreSession(stored: StoredSession): { jar: CookieJar; http: AxiosInstance } {
   const jar = deserializeJar(stored.sessionData)
 
   const client = axios.create({
-    withCredentials: true,
-    jar,
     timeout: 30_000,
     maxRedirects: 10,
     validateStatus: status => status >= 200 && status < 500,
@@ -182,10 +185,8 @@ async function restoreSession(stored: StoredSession): Promise<{ jar: CookieJar; 
     },
   })
 
-  return {
-    jar,
-    http: wrapper(client),
-  }
+  attachCookieJar(client, jar)
+  return { jar, http: client }
 }
 
 function normalizeBaseUrl(url: string): string {
@@ -218,7 +219,7 @@ export async function loginHAC(
   clsessionCookie?: string,
 ): Promise<string> {
   const link = normalizeBaseUrl(baseUrl)
-  const { jar, http } = await makeAxiosSession()
+  const { jar, http } = makeAxiosSession()
 
   console.log('[HAC CLIENT] loginHAC started', {
     baseUrl,
@@ -424,7 +425,7 @@ export async function getGrades(sessionToken: string): Promise<HACClass[]> {
   const stored = getSessionByToken(sessionToken)
   if (!stored) throw new Error('School session expired or not found — please log in again')
 
-  const { http } = await restoreSession(stored)
+  const { http } = restoreSession(stored)
   const link = stored.baseUrl
 
   const res = await http.get(`${link}HomeAccess/Content/Student/Assignments.aspx`)
@@ -504,7 +505,7 @@ export async function getTranscript(sessionToken: string): Promise<HACTranscript
   const stored = getSessionByToken(sessionToken)
   if (!stored) throw new Error('School session expired or not found — please log in again')
 
-  const { http } = await restoreSession(stored)
+  const { http } = restoreSession(stored)
   const link = stored.baseUrl
 
   const res = await http.get(`${link}HomeAccess/Content/Student/Transcript.aspx`)
@@ -551,7 +552,7 @@ export async function getSchedule(sessionToken: string): Promise<object[]> {
   const stored = getSessionByToken(sessionToken)
   if (!stored) throw new Error('School session expired or not found — please log in again')
 
-  const { http } = await restoreSession(stored)
+  const { http } = restoreSession(stored)
   const link = stored.baseUrl
 
   const res = await http.get(`${link}HomeAccess/Content/Student/Classes.aspx`)
@@ -584,7 +585,7 @@ export async function getStudentInfo(sessionToken: string): Promise<HACStudentIn
   const stored = getSessionByToken(sessionToken)
   if (!stored) throw new Error('School session expired or not found — please log in again')
 
-  const { http } = await restoreSession(stored)
+  const { http } = restoreSession(stored)
   const link = stored.baseUrl
 
   const res = await http.get(`${link}HomeAccess/Content/Student/Registration.aspx`)

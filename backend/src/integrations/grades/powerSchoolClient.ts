@@ -3,20 +3,8 @@
  * Adapted from https://github.com/ruskcoder/gradexis-api (powerschool/ folder).
  * All Gradexis-specific branding removed.
  */
-import axios, { type AxiosInstance } from 'axios'
+import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from 'axios'
 import { CookieJar } from 'tough-cookie'
-
-// axios-cookiejar-support v7 is ESM-only. esbuild converts `await import()` to
-// `require()` in CJS bundles, which fails. Use indirect Function() to prevent that.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _wrapper: ((instance: any) => AxiosInstance) | null = null
-async function getWrapper(): Promise<(instance: any) => AxiosInstance> {
-  if (_wrapper) return _wrapper
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const mod = await (Function('return import("axios-cookiejar-support")')() as Promise<{ wrapper: (instance: any) => AxiosInstance }>)
-  _wrapper = mod.wrapper
-  return _wrapper
-}
 import * as cheerio from 'cheerio'
 import { saveSession, getSessionByToken, StoredSession } from './sessionStore'
 
@@ -34,41 +22,54 @@ export interface PSStudentInfo {
 
 // ── Session helpers ────────────────────────────────────────────────────────────
 
-async function makeAxiosSession(): Promise<{ jar: CookieJar; http: AxiosInstance }> {
-  const wrapper = await getWrapper()
-  const jar = new CookieJar()
-  return {
-    jar,
-    http: wrapper(
-      axios.create({
-        withCredentials: true,
-        jar,
-        timeout: 20_000,
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        },
-      })
-    ),
-  }
+function attachCookieJar(client: AxiosInstance, jar: CookieJar): void {
+  client.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+    const url = config.url ?? ''
+    const cookies = await jar.getCookies(url)
+    if (cookies.length > 0) {
+      config.headers['Cookie'] = cookies.map(c => `${c.key}=${c.value}`).join('; ')
+    }
+    return config
+  })
+
+  client.interceptors.response.use(async response => {
+    const setCookieHeader = response.headers['set-cookie']
+    const url = (response.config as { url?: string }).url ?? ''
+    if (setCookieHeader) {
+      const entries = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader]
+      for (const raw of entries) {
+        try { await jar.setCookie(raw, url) } catch { /* ignore invalid cookies */ }
+      }
+    }
+    return response
+  })
 }
 
-async function restoreSession(stored: StoredSession): Promise<{ jar: CookieJar; http: AxiosInstance }> {
-  const wrapper = await getWrapper()
+function makeAxiosSession(): { jar: CookieJar; http: AxiosInstance } {
+  const jar = new CookieJar()
+  const client = axios.create({
+    timeout: 20_000,
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    },
+  })
+  attachCookieJar(client, jar)
+  return { jar, http: client }
+}
+
+function restoreSession(stored: StoredSession): { jar: CookieJar; http: AxiosInstance } {
   const jar = CookieJar.fromJSON(JSON.parse(stored.sessionData)) as CookieJar
-  const http = wrapper(
-    axios.create({
-      withCredentials: true,
-      jar,
-      timeout: 20_000,
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-      },
-    })
-  )
-  return { jar, http }
+  const client = axios.create({
+    timeout: 20_000,
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+    },
+  })
+  attachCookieJar(client, jar)
+  return { jar, http: client }
 }
 
 function normalizeBaseUrl(url: string): string {
@@ -92,7 +93,7 @@ export async function loginPowerSchool(
   userId: number
 ): Promise<string> {
   const link = normalizeBaseUrl(baseUrl)
-  const { jar, http } = await makeAxiosSession()
+  const { jar, http } = makeAxiosSession()
 
   const loginUrl = `${link}guardian/home.html`
 
@@ -147,7 +148,7 @@ export async function getGrades(sessionToken: string): Promise<PSClass[]> {
   const stored = getSessionByToken(sessionToken)
   if (!stored) throw new Error('School session expired or not found — please log in again')
 
-  const { http } = await restoreSession(stored)
+  const { http } = restoreSession(stored)
   const link = stored.baseUrl
 
   const res = await http.get(`${link}guardian/home.html`)
@@ -181,7 +182,7 @@ export async function getTranscript(sessionToken: string): Promise<object> {
   const stored = getSessionByToken(sessionToken)
   if (!stored) throw new Error('School session expired or not found — please log in again')
 
-  const { http } = await restoreSession(stored)
+  const { http } = restoreSession(stored)
   const link = stored.baseUrl
 
   // PowerSchool transcript is on the main grades page — return all term data
