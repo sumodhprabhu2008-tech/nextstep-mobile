@@ -20,7 +20,7 @@ export default function BranchHeader(): React.JSX.Element {
         activeOpacity={0.8}
       >
         <Image
-          source={require('../../../assets/logo.jpg')}
+          source={require('../../../assets/logo.png')}
           style={styles.logo}
         />
       </TouchableOpacity>

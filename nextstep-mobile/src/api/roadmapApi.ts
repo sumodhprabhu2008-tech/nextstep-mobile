@@ -24,6 +24,6 @@ interface RoadmapApiResponse {
 }
 
 export async function fetchRoadmap(): Promise<RoadmapData> {
-  const res = await apiFetch<RoadmapApiResponse>('/api/roadmap')
+  const res = await apiFetch<RoadmapApiResponse>('/roadmap')
   return res.data
 }

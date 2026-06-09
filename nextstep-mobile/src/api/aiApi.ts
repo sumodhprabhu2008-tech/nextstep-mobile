@@ -1,12 +1,23 @@
 import { apiFetch } from '../utils/api'
 
-export interface StudyPlanItem {
-  id: number
+export interface StudySession {
+  assignmentId: number
   title: string
   subject: string
   dueDate: string
-  estimatedMinutes: number
-  priority: 'HIGH' | 'MEDIUM' | 'LOW'
+  minutesToSpend: number
+  notes: string
+}
+
+export interface StudyPlanDay {
+  label: string
+  date: string
+  sessions: StudySession[]
+}
+
+export interface AiStudyPlan {
+  overview: string
+  days: StudyPlanDay[]
 }
 
 interface ChatResponse {
@@ -14,18 +25,18 @@ interface ChatResponse {
 }
 
 interface StudyPlanResponse {
-  data: { plan: StudyPlanItem[] }
+  data: AiStudyPlan
 }
 
 export async function sendChatMessage(message: string): Promise<string> {
-  const res = await apiFetch<ChatResponse>('/api/ai/chat', {
+  const res = await apiFetch<ChatResponse>('/ai/chat', {
     method: 'POST',
     body: JSON.stringify({ message }),
   })
   return res.data.reply
 }
 
-export async function fetchStudyPlan(): Promise<StudyPlanItem[]> {
-  const res = await apiFetch<StudyPlanResponse>('/api/ai/study-plan')
-  return res.data.plan
+export async function fetchStudyPlan(): Promise<AiStudyPlan> {
+  const res = await apiFetch<StudyPlanResponse>('/ai/study-plan')
+  return res.data
 }

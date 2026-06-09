@@ -1,8 +1,8 @@
 /**
  * HAC (Home Access Center) scraping client.
- * Adapted from https://github.com/ruskcoder/gradexis-api (hac/ and hac-v2/ folders).
- * All Gradexis-specific branding, push notifications, and referral logic removed.
+ * Debug-friendly version for NextStep local beta.
  */
+
 import axios from 'axios'
 import { wrapper } from 'axios-cookiejar-support'
 import { CookieJar } from 'tough-cookie'
@@ -48,29 +48,99 @@ export interface HACTranscript {
   classRank: string | null
 }
 
-// ── Session helpers ────────────────────────────────────────────────────────────
+// ── Error helper ──────────────────────────────────────────────────────────────
 
+function getAxiosErrorDetails(err: unknown): {
+  message: string
+  code?: string
+  status?: number
+  responseData?: unknown
+  url?: string
+  method?: string
+} {
+  const anyErr = err as {
+    message?: string
+    code?: string
+    response?: {
+      status?: number
+      data?: unknown
+    }
+    config?: {
+      url?: string
+      method?: string
+    }
+  }
+
+  return {
+    message: anyErr?.message ?? 'Unknown error',
+    code: anyErr?.code,
+    status: anyErr?.response?.status,
+    responseData: anyErr?.response?.data,
+    url: anyErr?.config?.url,
+    method: anyErr?.config?.method,
+  }
+}
+
+function throwDetailedAxiosError(label: string, err: unknown): never {
+  const details = getAxiosErrorDetails(err)
+
+  console.error(`[HAC CLIENT] ${label} failed`, {
+    message: details.message,
+    code: details.code,
+    status: details.status,
+    url: details.url,
+    method: details.method,
+    responsePreview:
+      typeof details.responseData === 'string'
+        ? details.responseData.slice(0, 1000)
+        : details.responseData,
+  })
+
+  if (details.code === 'ENOTFOUND') {
+    throw new Error(`Cannot reach HAC URL. DNS lookup failed for ${details.url ?? 'unknown URL'}`)
+  }
+
+  if (details.code === 'ECONNREFUSED') {
+    throw new Error(`Connection refused by HAC at ${details.url ?? 'unknown URL'}`)
+  }
+
+  if (details.code === 'ETIMEDOUT' || details.code === 'ECONNABORTED') {
+    throw new Error(`Connection timed out while contacting HAC at ${details.url ?? 'unknown URL'}`)
+  }
+
+  if (details.status) {
+    throw new Error(
+      `HAC request failed with HTTP ${details.status} at ${details.url ?? 'unknown URL'}`,
+    )
+  }
+
+  throw new Error(
+    `HAC request failed: ${details.message}${details.code ? ` (${details.code})` : ''}`,
+  )
+}
+
+// ── Session helpers ───────────────────────────────────────────────────────────
 
 function makeAxiosSession() {
   const jar = new CookieJar()
 
+  const client = axios.create({
+    withCredentials: true,
+    jar,
+    timeout: 30_000,
+    maxRedirects: 10,
+    validateStatus: status => status >= 200 && status < 500,
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+  })
+
   return {
     jar,
-    http: wrapper(
-      axios.create({
-        withCredentials: true,
-        jar,
-        timeout: 20_000,
-        maxRedirects: 10,
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-        },
-      })
-    ),
+    http: wrapper(client),
   }
 }
 
@@ -85,122 +155,253 @@ function deserializeJar(raw: string): CookieJar {
 function restoreSession(stored: StoredSession) {
   const jar = deserializeJar(stored.sessionData)
 
-  const http = wrapper(
-    axios.create({
-      withCredentials: true,
-      jar,
-      timeout: 20_000,
-      maxRedirects: 10,
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-      },
-    })
-  )
+  const client = axios.create({
+    withCredentials: true,
+    jar,
+    timeout: 30_000,
+    maxRedirects: 10,
+    validateStatus: status => status >= 200 && status < 500,
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+  })
 
-  return { jar, http }
+  return {
+    jar,
+    http: wrapper(client),
+  }
 }
 
 function normalizeBaseUrl(url: string): string {
-  return url.endsWith('/') ? url : url + '/'
+  return url.endsWith('/') ? url : `${url}/`
+}
+
+function getFormAction($: cheerio.CheerioAPI, fallbackUrl: string, link: string): string {
+  const action = $('form').first().attr('action')
+
+  if (!action) return fallbackUrl
+
+  if (action.startsWith('http://') || action.startsWith('https://')) {
+    return action
+  }
+
+  if (action.startsWith('/')) {
+    return `${link.replace(/\/$/, '')}${action}`
+  }
+
+  return `${link}${action}`
 }
 
 // ── Auth ───────────────────────────────────────────────────────────────────────
 
-/**
- * Log in to a HAC instance.
- * @param baseUrl  e.g. "https://hac.mydistrict.edu/"
- * @param username Student portal username
- * @param password Student portal password  (never stored — only the resulting session cookie is kept)
- * @param clsessionCookie Optional ClassLink session token (see classLinkHelper.ts)
- * @param userId NextStep user ID — used to key the server-side session
- * @returns sessionToken — a short-lived UUID that represents this school session
- */
 export async function loginHAC(
   baseUrl: string,
   username: string,
   password: string,
   userId: number,
-  clsessionCookie?: string
+  clsessionCookie?: string,
 ): Promise<string> {
   const link = normalizeBaseUrl(baseUrl)
   const { jar, http } = makeAxiosSession()
 
-  // Inject ClassLink cookie before hitting the HAC login page when the district
-  // uses ClassLink SSO. The browser extension in gradexis-login extracts this
-  // cookie; we just inject it into the request jar.
+  console.log('[HAC CLIENT] loginHAC started', {
+    baseUrl,
+    link,
+    userId,
+    usernameExists: Boolean(username),
+    passwordExists: Boolean(password),
+    hasClSessionCookie: Boolean(clsessionCookie),
+  })
+
   if (clsessionCookie) {
-    await jar.setCookie(`clsession=${clsessionCookie}; Domain=.classlink.com; Path=/`, 'https://classlink.com')
+    await jar.setCookie(
+      `clsession=${clsessionCookie}; Domain=.classlink.com; Path=/`,
+      'https://classlink.com',
+    )
   }
 
-  // Step 1 — fetch the login page to get the CSRF verification token
   const loginPageUrl = `${link}HomeAccess/Account/LogOn`
+
   let loginPageHtml: string
+
   try {
+    console.log('[HAC CLIENT] Fetching login page:', loginPageUrl)
+
     const res = await http.get(loginPageUrl, {
       headers: {
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br',
-        Connection: 'keep-alive',
+        'Accept-Language': 'en-US,en;q=0.9',
         'Upgrade-Insecure-Requests': '1',
       },
     })
+
+    console.log('[HAC CLIENT] Login page fetched', {
+      status: res.status,
+      finalUrl: res.request?.res?.responseUrl,
+      htmlLength: typeof res.data === 'string' ? res.data.length : 0,
+    })
+
     loginPageHtml = res.data as string
   } catch (err: unknown) {
-    const detail = err instanceof Error ? ` (${err.message})` : ''
-    const code = (err as { code?: string }).code ?? ''
-    if (code === 'ENOTFOUND') {
-      throw new Error(`Cannot reach ${baseUrl} — the district URL does not exist. Check the URL is correct.`)
-    }
-    if (code === 'ECONNREFUSED') {
-      throw new Error(`Connection refused at ${baseUrl} — district URL may be incorrect`)
-    }
-    if (code === 'ETIMEDOUT' || code === 'ECONNABORTED') {
-      throw new Error(`Connection timed out reaching ${baseUrl} — HAC server may be slow or down`)
-    }
-    throw new Error(`Could not reach HAC at ${baseUrl}${detail}`)
+    throwDetailedAxiosError('fetch login page', err)
   }
 
   const $ = cheerio.load(loginPageHtml)
-  const verificationToken = $("input[name='__RequestVerificationToken']").val() as string | undefined
+
+  const verificationToken =
+    $("input[name='__RequestVerificationToken']").val() as string | undefined
+
+  console.log('[HAC CLIENT] Verification token found:', Boolean(verificationToken))
+
   if (!verificationToken) {
-    throw new Error('Could not find login form on the HAC page — district URL may be wrong')
+    const title = $('title').text().trim()
+    const bodyPreview = $('body').text().replace(/\s+/g, ' ').trim().slice(0, 500)
+
+    console.error('[HAC CLIENT] Login form not found', {
+      title,
+      bodyPreview,
+    })
+
+    throw new Error(
+      `Could not find login form on HAC page. Page title: ${title || 'unknown'}. The district may use SSO/ClassLink or a different login URL.`,
+    )
   }
 
-  // Step 2 — submit credentials
-  const formData = new URLSearchParams({
-    __RequestVerificationToken: verificationToken,
-    SCKTY00328510CustomEnabled: 'False',
-    SCKTY00436568CustomEnabled: 'False',
-    Database: '10',
-    VerificationOption: 'UsernamePassword',
-    LogOnDetails_UserName: username,
-    LogOnDetails_Password: password,
+  const formData = new URLSearchParams()
+
+  $('form input').each((_i, input) => {
+    const name = $(input).attr('name')
+    const value = $(input).attr('value') ?? ''
+
+    if (name) {
+      formData.set(name, value)
+    }
   })
 
-  try {
-    await http.post(loginPageUrl, formData.toString())
-  } catch (err: unknown) {
-    throw new Error('Login request failed — network error')
+  formData.set('__RequestVerificationToken', verificationToken)
+  formData.set('VerificationOption', 'UsernamePassword')
+  // Set both dot-notation (ASP.NET MVC model binding) and underscore-notation (HTML ID form)
+  formData.set('LogOnDetails.UserName', username)
+  formData.set('LogOnDetails.Password', password)
+  formData.set('LogOnDetails_UserName', username)
+  formData.set('LogOnDetails_Password', password)
+  // Some HAC implementations use tempUN/tempPW as intermediate fields
+  if (formData.has('tempUN')) formData.set('tempUN', username)
+  if (formData.has('tempPW')) formData.set('tempPW', password)
+
+  if (!formData.has('Database')) {
+    formData.set('Database', '10')
   }
 
-  // Step 3 — verify the session by visiting a protected page
+  console.log('[HAC CLIENT] Login form fields:', Array.from(formData.keys()))
+
+  const loginPostUrl = getFormAction($, loginPageUrl, link)
+
   try {
-    const check = await http.get(`${link}HomeAccess/Content/Student/Registration.aspx`)
-    const body = check.data as string
-    if (body.includes('Welcome to') || body.includes('LogOn')) {
-      throw new Error('Invalid credentials — login was rejected by HAC')
+    console.log('[HAC CLIENT] Posting HAC login form:', loginPostUrl)
+
+    const postRes = await http.post(loginPostUrl, formData.toString(), {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Origin: link.replace(/\/$/, ''),
+        Referer: loginPageUrl,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+      },
+      maxRedirects: 10,
+      validateStatus: status => status >= 200 && status < 500,
+    })
+
+    const postFinalUrl: string =
+      (postRes.request as { res?: { responseUrl?: string } })?.res?.responseUrl ?? loginPostUrl
+    const postHtml = postRes.data as string
+    const $post = cheerio.load(postHtml)
+    const postTitle = $post('title').text().trim()
+    const postBodyPreview = $post('body').text().replace(/\s+/g, ' ').trim().slice(0, 500)
+
+    console.log('[HAC CLIENT] Login POST completed', {
+      status: postRes.status,
+      finalUrl: postFinalUrl,
+      htmlLength: typeof postHtml === 'string' ? postHtml.length : 0,
+      title: postTitle,
+      bodyPreview: postBodyPreview,
+    })
+
+    if (postRes.status >= 500) {
+      throw new Error(`HAC login POST returned HTTP ${postRes.status}. Title: ${postTitle || 'unknown'}.`)
+    }
+
+    // Explicit credential rejection messages
+    if (
+      postHtml.includes('Invalid user name or password') ||
+      postHtml.includes('Invalid username or password') ||
+      postHtml.includes('The user name or password is incorrect') ||
+      postHtml.includes('Login was unsuccessful')
+    ) {
+      throw new Error('Invalid credentials — HAC rejected the username or password')
+    }
+
+    // If POST redirected away from the login page, authentication succeeded
+    const isStillOnLoginPage =
+      postFinalUrl.includes('Account/LogOn') || postFinalUrl.includes('Account/Login')
+
+    if (!isStillOnLoginPage) {
+      console.log('[HAC CLIENT] POST redirected to non-login page — login confirmed:', postFinalUrl)
+    }
+
+    // If still on login page, verify via Home.aspx redirect check
+    if (isStillOnLoginPage) {
+      const homeUrl = `${link}HomeAccess/Home.aspx`
+      console.log('[HAC CLIENT] POST returned login page; verifying via Home.aspx:', homeUrl)
+
+      const homeRes = await http.get(homeUrl, {
+        headers: { Referer: loginPostUrl },
+        validateStatus: s => s < 500,
+      })
+
+      const homeBody = homeRes.data as string
+      const homeFinalUrl: string =
+        (homeRes.request as { res?: { responseUrl?: string } })?.res?.responseUrl ?? homeUrl
+
+      console.log('[HAC CLIENT] Home.aspx response', {
+        status: homeRes.status,
+        finalUrl: homeFinalUrl,
+        htmlLength: typeof homeBody === 'string' ? homeBody.length : 0,
+        bodyPreview: typeof homeBody === 'string' ? homeBody.slice(0, 500) : '',
+      })
+
+      const homeRedirectedToLogin =
+        homeFinalUrl.includes('Account/LogOn') || homeFinalUrl.includes('Account/Login')
+
+      if (homeRedirectedToLogin) {
+        throw new Error('Invalid credentials — HAC redirected to login page on protected resource')
+      }
     }
   } catch (err: unknown) {
-    if (err instanceof Error && err.message.includes('Invalid credentials')) throw err
-    // Some districts redirect differently; treat a non-error response as success
+    if (err instanceof Error && err.message.includes('Invalid credentials')) {
+      throw err
+    }
+    if (err instanceof Error && err.message.includes('HAC login POST returned HTTP')) {
+      throw err
+    }
+    throwDetailedAxiosError('submit login form', err)
   }
 
+  const hacDomain = link.replace(/\/$/, '')
+  const allCookies = jar.getCookiesSync(hacDomain)
+  console.log('[HAC CLIENT] Cookies in jar after login:', allCookies.map(c => c.key))
+
   const sessionToken = saveSession(userId, 'HAC', link, serializeJar(jar))
+
+  console.log('[HAC CLIENT] HAC session saved', {
+    userId,
+    hasSessionToken: Boolean(sessionToken),
+  })
+
   return sessionToken
 }
 
@@ -222,40 +423,66 @@ export async function getGrades(sessionToken: string): Promise<HACClass[]> {
     const header = $(el).find('.sg-header .sg-header-heading').text().trim()
     const parts = header.split(' - ')
     const name = parts[0]?.trim() ?? header
-    const period = $(el).find('.sg-header .sg-header-heading .sg-header-period').text().replace('Period', '').trim()
-    const average = $(el).find('.sg-header .sg-header-heading .sg-header-average').text().replace('Student Avg:', '').trim() || null
+    const period = $(el)
+      .find('.sg-header .sg-header-heading .sg-header-period')
+      .text()
+      .replace('Period', '')
+      .trim()
+    const average =
+      $(el)
+        .find('.sg-header .sg-header-heading .sg-header-average')
+        .text()
+        .replace('Student Avg:', '')
+        .trim() || null
 
     const scores: HACScore[] = []
-    $(el).find('tr.sg-asp-table-data-row').each((_j, row) => {
-      const cells = $(row).find('td')
-      scores.push({
-        name: cells.eq(0).text().trim(),
-        dateDue: cells.eq(1).text().trim(),
-        category: cells.eq(3).text().trim(),
-        score: parseFloat(cells.eq(5).text()) || null,
-        totalPoints: parseFloat(cells.eq(6).text()) || null,
-        percentage: cells.eq(7).text().trim(),
+
+    $(el)
+      .find('tr.sg-asp-table-data-row')
+      .each((_j, row) => {
+        const cells = $(row).find('td')
+
+        scores.push({
+          name: cells.eq(0).text().trim(),
+          dateDue: cells.eq(1).text().trim(),
+          category: cells.eq(3).text().trim(),
+          score: parseFloat(cells.eq(5).text()) || null,
+          totalPoints: parseFloat(cells.eq(6).text()) || null,
+          percentage: cells.eq(7).text().trim(),
+        })
       })
-    })
 
     if (name) {
-      classes.push({ name, period, teacher: '', room: '', average, scores })
+      classes.push({
+        name,
+        period,
+        teacher: '',
+        room: '',
+        average,
+        scores,
+      })
     }
   })
 
-  // Enrich with teacher/room from schedule page
   try {
     const schedRes = await http.get(`${link}HomeAccess/Content/Student/Classes.aspx`)
     const $s = cheerio.load(schedRes.data as string)
+
     $s('tr.sg-asp-table-data-row').each((_i, row) => {
       const cells = $s(row).find('td')
       const cn = cells.eq(1).text().trim()
       const teacher = cells.eq(3).find('a').text().trim() || cells.eq(3).text().trim()
       const room = cells.eq(4).text().trim()
       const match = classes.find(c => c.name === cn)
-      if (match) { match.teacher = teacher; match.room = room }
+
+      if (match) {
+        match.teacher = teacher
+        match.room = room
+      }
     })
-  } catch { /* schedule enrichment is best-effort */ }
+  } catch {
+    // schedule enrichment is best-effort
+  }
 
   return classes
 }
@@ -278,14 +505,17 @@ export async function getTranscript(sessionToken: string): Promise<HACTranscript
     const semMatch = header.match(/Semester\s*(\d)/i)
     const courses: Array<{ name: string; grade: string; credits: string }> = []
 
-    $(group).find('tr.sg-asp-table-data-row').each((_j, row) => {
-      const cells = $(row).find('td')
-      courses.push({
-        name: cells.eq(0).text().trim(),
-        grade: cells.eq(1).text().trim(),
-        credits: cells.eq(2).text().trim(),
+    $(group)
+      .find('tr.sg-asp-table-data-row')
+      .each((_j, row) => {
+        const cells = $(row).find('td')
+
+        courses.push({
+          name: cells.eq(0).text().trim(),
+          grade: cells.eq(1).text().trim(),
+          credits: cells.eq(2).text().trim(),
+        })
       })
-    })
 
     semesters.push({
       year: yearMatch?.[1] ?? '',
@@ -315,14 +545,22 @@ export async function getSchedule(sessionToken: string): Promise<object[]> {
   const $ = cheerio.load(res.data as string)
 
   const headers: string[] = []
-  $('tr.sg-asp-table-header-row th').each((_i, th) => { headers.push($(th).text().trim()) })
+
+  $('tr.sg-asp-table-header-row th').each((_i, th) => {
+    headers.push($(th).text().trim())
+  })
 
   const schedule: object[] = []
+
   $('tr.sg-asp-table-data-row').each((_i, row) => {
     const entry: Record<string, string> = {}
-    $(row).find('td').each((j, td) => {
-      if (headers[j]) entry[headers[j]] = $(td).text().trim()
-    })
+
+    $(row)
+      .find('td')
+      .each((j, td) => {
+        if (headers[j]) entry[headers[j]] = $(td).text().trim()
+      })
+
     schedule.push(entry)
   })
 

@@ -42,7 +42,7 @@ export default function DrawerContent({ navigation, state }: DrawerContentCompon
       {/* Logo */}
       <View style={styles.logoSection}>
         <Image
-          source={require('../../../assets/logo.jpg')}
+          source={require('../../../assets/logo.png')}
           style={styles.logoImage}
         />
         {(firstName !== null || gradeText !== null) && (

@@ -43,7 +43,7 @@ export default function LoginScreen(): React.JSX.Element {
         {/* ── Brand ── */}
         <View style={styles.brand}>
           <Image
-            source={require('../../assets/logo.jpg')}
+            source={require('../../assets/logo.png')}
             style={styles.logo}
           />
           <Text style={styles.title}>NextStep</Text>

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  ActivityIndicator,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -16,6 +17,7 @@ import AssignmentCard, { type CardAccent } from '../components/planner/Assignmen
 import SectionHeader from '../components/planner/SectionHeader'
 import { colors } from '../constants/colors'
 import type { PlanningParamList } from '../navigation/PlanningNavigator'
+import { fetchStudyPlan, type AiStudyPlan, type StudyPlanDay, type StudySession } from '../api/aiApi'
 
 type NavProp = NativeStackNavigationProp<PlanningParamList>
 import {
@@ -119,12 +121,16 @@ function EmptyView(): React.JSX.Element {
 
 export default function SmartPlannerScreen(): React.JSX.Element {
   const navigation = useNavigation<NavProp>()
+  const [activeTab, setActiveTab] = useState<'assignments' | 'plan'>('assignments')
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isCompletedExpanded, setIsCompletedExpanded] = useState(false)
   const [togglingIds, setTogglingIds] = useState<Set<number>>(new Set())
+  const [studyPlan, setStudyPlan] = useState<AiStudyPlan | null>(null)
+  const [isPlanLoading, setIsPlanLoading] = useState(false)
+  const [planError, setPlanError] = useState<string | null>(null)
 
   const headerDate = useMemo(() => formatHeaderDate(), [])
 
@@ -188,70 +194,222 @@ export default function SmartPlannerScreen(): React.JSX.Element {
     [handleToggle],
   )
 
+  const loadStudyPlan = useCallback(async (): Promise<void> => {
+    setIsPlanLoading(true)
+    setPlanError(null)
+    try {
+      const plan = await fetchStudyPlan()
+      setStudyPlan(plan)
+    } catch (e) {
+      setPlanError(e instanceof Error ? e.message : 'Failed to generate study plan.')
+    } finally {
+      setIsPlanLoading(false)
+    }
+  }, [])
+
+  const handleTabChange = useCallback((tab: 'assignments' | 'plan'): void => {
+    setActiveTab(tab)
+    if (tab === 'plan' && studyPlan === null && !isPlanLoading) {
+      void loadStudyPlan()
+    }
+  }, [studyPlan, isPlanLoading, loadStudyPlan])
+
   useEffect(() => {
     void loadAssignments()
   }, [loadAssignments])
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      {/* Screen header */}
       <PlannerHeader onCalendar={() => navigation.navigate('Calendar')} date={headerDate} navigation={navigation} />
 
-      {isLoading ? (
-        <LoadingView />
-      ) : error !== null ? (
-        <ErrorView message={error} onRetry={() => void loadAssignments()} />
-      ) : (
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={isRefreshing}
-              onRefresh={() => void loadAssignments(true)}
-              tintColor={colors.primary}
-              colors={[colors.primary]}
-            />
-          }
-          contentContainerStyle={styles.scrollContent}
+      {/* Tab bar */}
+      <View style={tabBarStyles.container}>
+        <TouchableOpacity
+          style={[tabBarStyles.tab, activeTab === 'assignments' && tabBarStyles.activeTab]}
+          onPress={() => handleTabChange('assignments')}
+          activeOpacity={0.7}
         >
-          {plannerSections.length === 0 ? (
-            <EmptyView />
-          ) : (
-            plannerSections.map((section) => {
-              const isCompleted = section.key === 'completed'
-              const isExpanded = !isCompleted || isCompletedExpanded
+          <Text style={[tabBarStyles.tabText, activeTab === 'assignments' && tabBarStyles.activeTabText]}>
+            Assignments
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[tabBarStyles.tab, activeTab === 'plan' && tabBarStyles.activeTab]}
+          onPress={() => handleTabChange('plan')}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name="sparkles-outline"
+            size={13}
+            color={activeTab === 'plan' ? colors.primary : colors.textMuted}
+            style={{ marginRight: 4 }}
+          />
+          <Text style={[tabBarStyles.tabText, activeTab === 'plan' && tabBarStyles.activeTabText]}>
+            AI Study Plan
+          </Text>
+        </TouchableOpacity>
+      </View>
 
-              return (
-                <View key={section.key} style={styles.section}>
-                  <SectionHeader
-                    label={section.label}
-                    count={section.assignments.length}
-                    accentColor={sectionAccentColor(section.key)}
-                    isCollapsible={isCompleted}
-                    isExpanded={isExpanded}
-                    onToggleExpand={() => setIsCompletedExpanded((e) => !e)}
-                  />
-                  {isExpanded &&
-                    section.assignments.map((a) => (
-                      <AssignmentCard
-                        key={a.id}
-                        title={a.title}
-                        subject={a.subject}
-                        estimatedMinutes={a.estimatedMinutes}
-                        dueDate={a.dueDate}
-                        completed={a.completed}
-                        accent={sectionAccent(section.key)}
-                        onToggle={() => onCardToggle(a.id, !a.completed)}
-                        isToggling={togglingIds.has(a.id)}
-                      />
-                    ))}
-                </View>
-              )
-            })
-          )}
-        </ScrollView>
+      {activeTab === 'assignments' ? (
+        isLoading ? (
+          <LoadingView />
+        ) : error !== null ? (
+          <ErrorView message={error} onRetry={() => void loadAssignments()} />
+        ) : (
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={isRefreshing}
+                onRefresh={() => void loadAssignments(true)}
+                tintColor={colors.primary}
+                colors={[colors.primary]}
+              />
+            }
+            contentContainerStyle={styles.scrollContent}
+          >
+            {plannerSections.length === 0 ? (
+              <EmptyView />
+            ) : (
+              plannerSections.map((section) => {
+                const isCompleted = section.key === 'completed'
+                const isExpanded = !isCompleted || isCompletedExpanded
+                return (
+                  <View key={section.key} style={styles.section}>
+                    <SectionHeader
+                      label={section.label}
+                      count={section.assignments.length}
+                      accentColor={sectionAccentColor(section.key)}
+                      isCollapsible={isCompleted}
+                      isExpanded={isExpanded}
+                      onToggleExpand={() => setIsCompletedExpanded((e) => !e)}
+                    />
+                    {isExpanded &&
+                      section.assignments.map((a) => (
+                        <AssignmentCard
+                          key={a.id}
+                          title={a.title}
+                          subject={a.subject}
+                          estimatedMinutes={a.estimatedMinutes}
+                          dueDate={a.dueDate}
+                          completed={a.completed}
+                          accent={sectionAccent(section.key)}
+                          onToggle={() => onCardToggle(a.id, !a.completed)}
+                          isToggling={togglingIds.has(a.id)}
+                        />
+                      ))}
+                  </View>
+                )
+              })
+            )}
+          </ScrollView>
+        )
+      ) : (
+        <AiPlanView
+          plan={studyPlan}
+          isLoading={isPlanLoading}
+          error={planError}
+          onLoad={() => void loadStudyPlan()}
+        />
       )}
     </View>
+  )
+}
+
+// ─── AI Plan Components ───────────────────────────────────────────────────────
+
+function AiSessionCard({ session }: { session: StudySession }): React.JSX.Element {
+  return (
+    <View style={aiStyles.sessionCard}>
+      <View style={{ flex: 1 }}>
+        <Text variant="h3" style={{ marginBottom: 2 }}>{session.title}</Text>
+        <Text variant="caption" color={colors.textSecondary}>{session.subject} · Due {session.dueDate}</Text>
+        {session.notes ? (
+          <Text variant="caption" color={colors.textMuted} style={{ marginTop: 4 }}>{session.notes}</Text>
+        ) : null}
+      </View>
+      <View style={aiStyles.minutesBadge}>
+        <Text style={aiStyles.minutesText}>{session.minutesToSpend}m</Text>
+      </View>
+    </View>
+  )
+}
+
+function AiDaySection({ day }: { day: StudyPlanDay }): React.JSX.Element {
+  const totalMin = day.sessions.reduce((sum, s) => sum + s.minutesToSpend, 0)
+  return (
+    <View style={aiStyles.daySection}>
+      <View style={aiStyles.dayHeader}>
+        <Text variant="h3" style={{ flex: 1 }}>{day.label}</Text>
+        <Text variant="caption" color={colors.textMuted}>{totalMin}m</Text>
+      </View>
+      {day.sessions.map((s, i) => (
+        <AiSessionCard key={`${s.assignmentId}-${i}`} session={s} />
+      ))}
+    </View>
+  )
+}
+
+function AiPlanView({
+  plan,
+  isLoading,
+  error,
+  onLoad,
+}: {
+  plan: AiStudyPlan | null
+  isLoading: boolean
+  error: string | null
+  onLoad: () => void
+}): React.JSX.Element {
+  if (isLoading) {
+    return (
+      <View style={styles.centerState}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text variant="body" color={colors.textSecondary} style={{ marginTop: 14 }}>
+          Generating your study plan…
+        </Text>
+      </View>
+    )
+  }
+  if (error !== null) {
+    return (
+      <View style={styles.centerState}>
+        <Text variant="h3" color={colors.error} style={styles.stateTitle}>Could Not Generate Plan</Text>
+        <Text variant="body" color={colors.textSecondary} style={styles.stateMessage}>{error}</Text>
+        <Button label="Try Again" onPress={onLoad} />
+      </View>
+    )
+  }
+  if (plan === null) {
+    return (
+      <View style={styles.centerState}>
+        <Ionicons name="sparkles-outline" size={40} color={colors.primary} style={{ marginBottom: 16 }} />
+        <Text variant="h2" style={styles.stateTitle}>AI Study Plan</Text>
+        <Text variant="body" color={colors.textSecondary} style={styles.stateMessage}>
+          NextStep AI will organize your assignments into a smart daily schedule.
+        </Text>
+        <Button label="Generate Study Plan" onPress={onLoad} />
+      </View>
+    )
+  }
+  return (
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={aiStyles.scrollContent}>
+      {plan.overview ? (
+        <View style={aiStyles.overviewCard}>
+          <Ionicons name="sparkles-outline" size={16} color={colors.primary} style={{ marginRight: 8, marginTop: 2 }} />
+          <Text variant="body" style={{ flex: 1 }}>{plan.overview}</Text>
+        </View>
+      ) : null}
+      {plan.days.length === 0 ? (
+        <EmptyView />
+      ) : (
+        plan.days.map((day, i) => <AiDaySection key={`${day.label}-${i}`} day={day} />)
+      )}
+      <TouchableOpacity style={aiStyles.refreshBtn} onPress={onLoad} activeOpacity={0.7}>
+        <Ionicons name="refresh-outline" size={15} color={colors.textMuted} />
+        <Text variant="caption" color={colors.textMuted} style={{ marginLeft: 6 }}>Regenerate Plan</Text>
+      </TouchableOpacity>
+    </ScrollView>
   )
 }
 
@@ -312,6 +470,98 @@ const plannerHeaderStyles = StyleSheet.create({
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+})
+
+// ─── Tab Bar Styles ───────────────────────────────────────────────────────────
+
+const tabBarStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    paddingHorizontal: 16,
+    paddingTop: 4,
+  },
+  tab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginRight: 4,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  activeTab: {
+    borderBottomColor: colors.primary,
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '500' as const,
+    color: colors.textMuted,
+  },
+  activeTabText: {
+    color: colors.primary,
+    fontWeight: '600' as const,
+  },
+})
+
+// ─── AI Plan Styles ───────────────────────────────────────────────────────────
+
+const aiStyles = StyleSheet.create({
+  scrollContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 40 },
+  overviewCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: colors.primary + '18',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.primary + '44',
+    padding: 14,
+    marginBottom: 20,
+  },
+  daySection: {
+    marginBottom: 20,
+  },
+  dayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    marginBottom: 8,
+  },
+  sessionCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    marginBottom: 8,
+  },
+  minutesBadge: {
+    backgroundColor: colors.primary + '22',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginLeft: 12,
+    alignSelf: 'flex-start',
+  },
+  minutesText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: colors.primary,
+  },
+  refreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    marginTop: 4,
   },
 })
 

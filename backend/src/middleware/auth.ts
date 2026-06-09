@@ -13,6 +13,12 @@ interface AccessTokenPayload {
 }
 
 export function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void {
+  // Dev bypass already injected userId — skip JWT verification
+  if (req.userId !== undefined) {
+    next()
+    return
+  }
+
   const header = req.headers.authorization
   if (!header?.startsWith('Bearer ')) {
     res.status(401).json({

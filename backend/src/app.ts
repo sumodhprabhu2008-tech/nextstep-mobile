@@ -71,30 +71,35 @@ app.get('/api/health/connectivity', async (_req, res) => {
 
 app.use('/api/auth', authRoutes)
 app.use('/api/grades', gradesRoutes)
-app.use('/api/assignments', assignmentsRouter)
-app.use('/api/students', studentsRouter)
-app.use('/api/roadmap', roadmapRouter)
-app.use('/api/ai', aiRouter)
 
 /**
  * TEMPORARY LOCAL DEV ONLY:
- * If your mobile app is not passing a JWT token yet, this bypass lets you test
- * the HAC/PowerSchool integration route.
+ * When ENABLE_DEV_INTEGRATION_AUTH_BYPASS=true (set in .env), all protected
+ * routes inject userId=1 so the app works without a JWT.  This lets you test
+ * on-device via Expo Go without going through the full auth flow first.
  *
- * Before production, replace this whole block with:
- * app.use('/api/integrations/grades', requireAuth, gradesIntegrationRouter)
+ * Before production, remove this block and restore the plain registrations.
  */
 const ENABLE_DEV_INTEGRATION_AUTH_BYPASS =
   process.env.ENABLE_DEV_INTEGRATION_AUTH_BYPASS === 'true'
 
+function devBypass(req: any, _res: any, next: any): void {
+  req.userId = 1
+  next()
+}
+
 if (ENABLE_DEV_INTEGRATION_AUTH_BYPASS) {
-  app.use('/api/integrations/grades', (req, _res, next) => {
-    console.log('[DEV AUTH BYPASS] Using fake user id 1 for grade integration testing')
-    ;(req as any).userId = 1
-    ;(req as any).user = { id: 1 }
-    next()
-  }, gradesIntegrationRouter)
+  console.log('[DEV] Auth bypass active — all routes use userId=1')
+  app.use('/api/assignments', devBypass, assignmentsRouter)
+  app.use('/api/students', devBypass, studentsRouter)
+  app.use('/api/roadmap', devBypass, roadmapRouter)
+  app.use('/api/ai', devBypass, aiRouter)
+  app.use('/api/integrations/grades', devBypass, gradesIntegrationRouter)
 } else {
+  app.use('/api/assignments', assignmentsRouter)
+  app.use('/api/students', studentsRouter)
+  app.use('/api/roadmap', roadmapRouter)
+  app.use('/api/ai', aiRouter)
   app.use('/api/integrations/grades', requireAuth, gradesIntegrationRouter)
 }
 

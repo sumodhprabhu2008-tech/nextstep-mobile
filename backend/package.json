@@ -16,6 +16,7 @@
     "seed": "ts-node --project tsconfig.json prisma/seed.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.102.0",
     "@prisma/client": "^5.22.0",
     "axios": "^1.16.1",
     "axios-cookiejar-support": "^7.0.0",

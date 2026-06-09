@@ -58,6 +58,6 @@ interface StudentApiResponse {
 }
 
 export async function fetchStudentData(): Promise<StudentData> {
-  const res = await apiFetch<StudentApiResponse>('/api/students/me')
+  const res = await apiFetch<StudentApiResponse>('/students/me')
   return res.data
 }

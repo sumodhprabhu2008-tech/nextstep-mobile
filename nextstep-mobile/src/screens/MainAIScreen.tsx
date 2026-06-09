@@ -188,7 +188,7 @@ export default function MainAIScreen(): React.JSX.Element {
             ListHeaderComponent={
               <View style={styles.greeting}>
                 <Image
-                  source={require('../../assets/logo.jpg')}
+                  source={require('../../assets/logo.png')}
                   style={styles.logoImage}
                 />
                 <Text variant="heading" style={styles.hello}>Hello {firstName},</Text>
@@ -260,7 +260,7 @@ function MessageBubble({ message }: { message: ChatMessage }): React.JSX.Element
     <View style={[styles.bubbleWrap, isUser ? styles.bubbleWrapRight : styles.bubbleWrapLeft]}>
       {!isUser && (
         <Image
-          source={require('../../assets/logo.jpg')}
+          source={require('../../assets/logo.png')}
           style={styles.aiBadgeImage}
         />
       )}
@@ -277,7 +277,7 @@ function TypingIndicator(): React.JSX.Element {
   return (
     <View style={[styles.bubbleWrap, styles.bubbleWrapLeft]}>
       <Image
-        source={require('../../assets/logo.jpg')}
+        source={require('../../assets/logo.png')}
         style={styles.aiBadgeImage}
       />
       <View style={[styles.bubble, styles.bubbleAi, { paddingHorizontal: 16, paddingVertical: 12 }]}>

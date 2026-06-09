@@ -65,6 +65,13 @@ async function main(): Promise<void> {
     })
   }
 
+  function due(offsetDays: number): Date {
+    const d = new Date()
+    d.setDate(d.getDate() + offsetDays)
+    d.setHours(23, 59, 0, 0)
+    return d
+  }
+
   interface AssignmentDef {
     title: string
     subject: string
@@ -74,18 +81,19 @@ async function main(): Promise<void> {
 
   const ASSIGNMENTS: AssignmentDef[] = [
     // Overdue
-    { title: 'Problem Set 7 — Integration by Parts',    subject: 'AP Calculus BC',       dueDate: new Date('2026-05-28T23:59:00'), estimatedMinutes: 90  },
-    { title: 'Hamlet Act IV Essay Draft',               subject: 'AP English Literature', dueDate: new Date('2026-05-30T23:59:00'), estimatedMinutes: 120 },
+    { title: 'Problem Set 7 — Integration by Parts',         subject: 'AP Calculus BC',       dueDate: due(-3),  estimatedMinutes: 90  },
+    { title: 'Hamlet Act IV Essay Draft',                    subject: 'AP English Language',  dueDate: due(-1),  estimatedMinutes: 120 },
     // Due today
-    { title: 'Cell Division Lab Report',                subject: 'Biology',              dueDate: new Date('2026-06-01T23:59:00'), estimatedMinutes: 60  },
-    { title: 'WWII Primary Source Analysis',            subject: 'U.S. History',         dueDate: new Date('2026-06-01T23:59:00'), estimatedMinutes: 45  },
+    { title: 'Cell Division Lab Report',                     subject: 'Honors Chemistry',     dueDate: due(0),   estimatedMinutes: 60  },
+    { title: 'WWII Primary Source Analysis',                 subject: 'U.S. History',         dueDate: due(0),   estimatedMinutes: 45  },
     // Due tomorrow
-    { title: 'Verb Conjugation Quiz Prep — Subjunctive Mood', subject: 'Spanish III',   dueDate: new Date('2026-06-02T23:59:00'), estimatedMinutes: 30  },
+    { title: 'Verb Conjugation Quiz Prep — Subjunctive Mood', subject: 'Spanish III',         dueDate: due(1),   estimatedMinutes: 30  },
     // This week
-    { title: 'Recursion Practice Problems',             subject: 'Computer Science',     dueDate: new Date('2026-06-03T23:59:00'), estimatedMinutes: 75  },
-    { title: 'Battle of Midway — Cause & Effect Analysis', subject: 'U.S. History',     dueDate: new Date('2026-06-05T23:59:00'), estimatedMinutes: 90  },
+    { title: 'Recursion Practice Problems',                  subject: 'AP Calculus BC',       dueDate: due(3),   estimatedMinutes: 75  },
+    { title: 'Battle of Midway — Cause & Effect Analysis',   subject: 'U.S. History',         dueDate: due(5),   estimatedMinutes: 90  },
     // Later
-    { title: 'Final Exam Study Guide',                  subject: 'AP Calculus BC',       dueDate: new Date('2026-06-15T23:59:00'), estimatedMinutes: 180 },
+    { title: 'Final Exam Study Guide',                       subject: 'AP Calculus BC',       dueDate: due(14),  estimatedMinutes: 180 },
+    { title: 'College Essay Rough Draft',                    subject: 'AP English Language',  dueDate: due(10),  estimatedMinutes: 120 },
   ]
 
   await prisma.assignment.createMany({

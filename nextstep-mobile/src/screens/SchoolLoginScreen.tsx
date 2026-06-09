@@ -256,7 +256,7 @@ export default function SchoolLoginScreen(): React.JSX.Element {
           {/* Brand */}
           <View style={styles.brand}>
             <Image
-              source={require('../../assets/logo.jpg')}
+              source={require('../../assets/logo.png')}
               style={styles.logo}
               resizeMode="contain"
             />
