@@ -349,7 +349,7 @@ export async function loginHAC(
       throw new Error(`HAC login POST returned HTTP ${postRes.status}. Title: ${postTitle || 'unknown'}.`)
     }
 
-    // Explicit credential rejection messages
+    // Explicit text-based credential rejection
     if (
       postHtml.includes('Invalid user name or password') ||
       postHtml.includes('Invalid username or password') ||
@@ -359,18 +359,18 @@ export async function loginHAC(
       throw new Error('Invalid credentials — HAC rejected the username or password')
     }
 
-    // If POST redirected away from the login page, authentication succeeded
-    const isStillOnLoginPage =
-      postFinalUrl.includes('Account/LogOn') || postFinalUrl.includes('Account/Login')
+    // Content-based check: does the POST response still contain a login form?
+    // This is more reliable than URL-tracking since responseUrl can be unreliable
+    // in serverless environments.
+    const postHasLoginForm = $post("input[name='__RequestVerificationToken']").length > 0
+      || $post("input[name='LogOnDetails.UserName']").length > 0
+      || $post("input[name='LogOnDetails_UserName']").length > 0
 
-    if (!isStillOnLoginPage) {
-      console.log('[HAC CLIENT] POST redirected to non-login page — login confirmed:', postFinalUrl)
-    }
-
-    // If still on login page, verify via Home.aspx redirect check
-    if (isStillOnLoginPage) {
+    if (postHasLoginForm) {
+      // Still showing login form — POST either failed or redirected back.
+      // Verify by fetching Home.aspx and checking if IT also shows a login form.
       const homeUrl = `${link}HomeAccess/Home.aspx`
-      console.log('[HAC CLIENT] POST returned login page; verifying via Home.aspx:', homeUrl)
+      console.log('[HAC CLIENT] POST returned login form; verifying via Home.aspx:', homeUrl)
 
       const homeRes = await http.get(homeUrl, {
         headers: { Referer: loginPostUrl },
@@ -378,21 +378,25 @@ export async function loginHAC(
       })
 
       const homeBody = homeRes.data as string
+      const $home = cheerio.load(homeBody)
+      const homeHasLoginForm = $home("input[name='__RequestVerificationToken']").length > 0
+        || $home("input[name='LogOnDetails.UserName']").length > 0
+        || $home("input[name='LogOnDetails_UserName']").length > 0
+      // Also check URL in case follow-redirects does provide it
       const homeFinalUrl: string =
-        (homeRes.request as { res?: { responseUrl?: string } })?.res?.responseUrl ?? homeUrl
-
-      console.log('[HAC CLIENT] Home.aspx response', {
-        status: homeRes.status,
-        finalUrl: homeFinalUrl,
-        htmlLength: typeof homeBody === 'string' ? homeBody.length : 0,
-        bodyPreview: typeof homeBody === 'string' ? homeBody.slice(0, 500) : '',
-      })
-
-      const homeRedirectedToLogin =
+        (homeRes.request as { res?: { responseUrl?: string } })?.res?.responseUrl ?? ''
+      const homeRedirectedToLoginUrl =
         homeFinalUrl.includes('Account/LogOn') || homeFinalUrl.includes('Account/Login')
 
-      if (homeRedirectedToLogin) {
-        throw new Error('Invalid credentials — HAC redirected to login page on protected resource')
+      console.log('[HAC CLIENT] Home.aspx check', {
+        status: homeRes.status,
+        finalUrl: homeFinalUrl,
+        hasLoginForm: homeHasLoginForm,
+        urlRedirectedToLogin: homeRedirectedToLoginUrl,
+      })
+
+      if (homeHasLoginForm || homeRedirectedToLoginUrl) {
+        throw new Error('Invalid credentials — HAC rejected the username or password')
       }
     }
   } catch (err: unknown) {
