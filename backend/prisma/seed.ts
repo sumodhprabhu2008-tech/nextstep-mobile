@@ -37,6 +37,17 @@ async function main(): Promise<void> {
     },
   })
 
+  const peer = await prisma.user.upsert({
+    where: { email: 'peer@nextstep.com' },
+    update: {},
+    create: {
+      email: 'peer@nextstep.com',
+      passwordHash: await bcrypt.hash('nextstep123', 10),
+      name: 'Peer Student',
+      role: 'STUDENT',
+    },
+  })
+
   await prisma.assignment.deleteMany({ where: { userId: user.id } })
   await prisma.grade.deleteMany({ where: { userId: user.id } })
   await prisma.course.deleteMany({ where: { userId: user.id } })
@@ -106,6 +117,21 @@ async function main(): Promise<void> {
       source: ASSIGNMENT_SOURCE.SEED,
     })),
   })
+
+  const existingPosts = await prisma.post.count()
+  if (existingPosts === 0) {
+    await prisma.post.createMany({
+      data: [
+        {
+          authorId: peer.id,
+          body: 'Anyone want to review AP Calculus BC this weekend? I just got an A- on the latest quiz and would love to compare notes.',
+          course: 'AP Calculus BC',
+          subject: 'Math',
+          grade: 'A-',
+        },
+      ],
+    })
+  }
 }
 
 main()

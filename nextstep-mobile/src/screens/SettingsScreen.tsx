@@ -12,6 +12,7 @@ import Skeleton from '../components/ui/Skeleton'
 import ScreenHeader from '../components/ui/ScreenHeader'
 import { colors } from '../constants/colors'
 import { useAuth } from '../context/AuthContext'
+import { useSchoolSession } from '../context/SchoolSessionContext'
 import { fetchStudentData, type StudentData } from '../api/studentApi'
 
 function initials(name: string | null): string {
@@ -62,6 +63,7 @@ function SectionTitle({ title }: { title: string }): React.JSX.Element {
 
 export default function SettingsScreen(): React.JSX.Element {
   const { logout } = useAuth()
+  const { signOut: signOutSchool } = useSchoolSession()
   const [data, setData] = useState<StudentData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
@@ -84,10 +86,15 @@ export default function SettingsScreen(): React.JSX.Element {
     Alert.alert('Coming Soon', 'This feature is coming in a future update.')
   }
 
+  async function performLogout(): Promise<void> {
+    await signOutSchool()
+    await logout()
+  }
+
   function confirmLogout(): void {
     Alert.alert('Log Out?', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Log Out', style: 'destructive', onPress: () => void logout() },
+      { text: 'Log Out', style: 'destructive', onPress: () => void performLogout() },
     ])
   }
 

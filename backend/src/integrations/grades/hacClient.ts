@@ -343,10 +343,29 @@ export async function loginHAC(
       htmlLength: typeof postHtml === 'string' ? postHtml.length : 0,
       title: postTitle,
       bodyPreview: postBodyPreview,
+      hasValidationToken: Boolean($post("input[name='__RequestVerificationToken']").length),
+      formInputCount: $post('form input').length,
     })
 
     if (postRes.status >= 500) {
       throw new Error(`HAC login POST returned HTTP ${postRes.status}. Title: ${postTitle || 'unknown'}.`)
+    }
+
+    const loweredHtml = postHtml.toLowerCase()
+    const isMkcSso =
+      loweredHtml.includes('mykaty cloud') ||
+      loweredHtml.includes('mkc') ||
+      loweredHtml.includes('multi-factor authentication') ||
+      loweredHtml.includes('mfa')
+
+    const postHasLoginForm = $post("input[name='__RequestVerificationToken']").length > 0
+    const postTitleLowered = $post('title').text().trim().toLowerCase()
+    const postUrlLooksLikeLogin = postFinalUrl.toLowerCase().includes('logon') || postFinalUrl.toLowerCase().includes('login')
+
+    if (isMkcSso) {
+      throw new Error(
+        'This HAC site requires MyKaty Cloud/SSO login and cannot accept direct HAC credentials. Please sign in through your district SSO flow or use a different portal method.',
+      )
     }
 
     // Explicit text-based credential rejection
@@ -359,11 +378,14 @@ export async function loginHAC(
       throw new Error('Invalid credentials — HAC rejected the username or password')
     }
 
-    // Primary check: successful HAC login always sets the .ASPXAUTH cookie.
-    // A failed login only sets ASP.NET_SessionId. Check the jar right now.
+    // If the POST response still shows a login form and no auth cookie, fail fast.
     const hacDomainCheck = link.replace(/\/$/, '')
     const cookiesAfterPost = jar.getCookiesSync(hacDomainCheck)
     const hasAuthCookie = cookiesAfterPost.some(c => c.key === '.ASPXAUTH')
+
+    if (!hasAuthCookie && (postHasLoginForm || postUrlLooksLikeLogin || postTitle.includes('login'))) {
+      throw new Error('Invalid credentials — HAC rejected the username or password')
+    }
 
     console.log('[HAC CLIENT] Cookies after POST:', cookiesAfterPost.map(c => c.key))
 
@@ -378,11 +400,31 @@ export async function loginHAC(
       const $home = cheerio.load(homeBody)
       const homeHasLoginForm = $home("input[name='__RequestVerificationToken']").length > 0
       const homeHasAuthCookie = jar.getCookiesSync(hacDomainCheck).some(c => c.key === '.ASPXAUTH')
+      const loweredHomeBody = homeBody.toLowerCase()
+      const homeIsMkcSso =
+        loweredHomeBody.includes('mykaty cloud') ||
+        loweredHomeBody.includes('mkc') ||
+        loweredHomeBody.includes('multi-factor authentication') ||
+        loweredHomeBody.includes('mfa')
+
+      const homeTitle = $home('title').text().trim()
+      const homeBodyPreview = homeBody.replace(/\s+/g, ' ').trim().slice(0, 500)
 
       console.log('[HAC CLIENT] Home.aspx fallback check', {
         hasLoginForm: homeHasLoginForm,
         hasAuthCookieAfterHome: homeHasAuthCookie,
+        homeIsMkcSso,
+        homeStatus: homeRes.status,
+        homeTitle,
+        homeBodyPreview,
+        homeBodyLength: homeBody.length,
       })
+
+      if (homeIsMkcSso) {
+        throw new Error(
+          'This HAC site requires MyKaty Cloud/SSO login and cannot accept direct HAC credentials. Please sign in through your district SSO flow or use a different portal method.',
+        )
+      }
 
       if (homeHasLoginForm || !homeHasAuthCookie) {
         throw new Error('Invalid credentials — HAC rejected the username or password')
@@ -584,8 +626,19 @@ export async function getStudentInfo(sessionToken: string): Promise<HACStudentIn
   const res = await http.get(`${link}HomeAccess/Content/Student/Registration.aspx`)
   const $ = cheerio.load(res.data as string)
 
+  const name = $('#plnMain_lblRegStudentName').text().trim()
+  const loginFormPresent = $("input[name='__RequestVerificationToken']").length > 0
+
+  if (!name) {
+    if (loginFormPresent) {
+      throw new Error('HAC login did not complete successfully; the portal returned a login page instead of student information.')
+    }
+
+    throw new Error('HAC login completed, but the registration page did not contain a valid student name.')
+  }
+
   return {
-    name: $('#plnMain_lblRegStudentName').text().trim(),
+    name,
     grade: $('#plnMain_lblGrade').text().trim(),
     school: $('#plnMain_lblBuildingName').text().trim(),
     district: $('span.sg-banner-text').first().text().trim(),

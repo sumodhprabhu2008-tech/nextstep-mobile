@@ -56,6 +56,15 @@ export interface PortalGpa {
   systemType: 'HAC' | 'PowerSchool'
 }
 
+export interface PortalInfo {
+  name: string
+  grade: string
+  school: string
+  district: string
+  counselor: string
+  cohortYear: string
+}
+
 // ── Internal request helper ───────────────────────────────────────────────────
 
 async function portalRequest<T>(
@@ -212,6 +221,14 @@ export async function getCurrentPortalGrades(): Promise<NormalizedCourse[]> {
 export async function getPortalGpa(): Promise<PortalGpa> {
   const res = await portalRequest<{ data: PortalGpa }>(
     '/integrations/grades/gpa',
+  )
+
+  return res.data
+}
+
+export async function getPortalInfo(): Promise<PortalInfo> {
+  const res = await portalRequest<{ data: PortalInfo }>(
+    '/integrations/grades/info',
   )
 
   return res.data

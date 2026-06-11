@@ -1,7 +1,6 @@
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -20,9 +19,14 @@ model User {
 
   profile           StudentProfile?
   schoolConnection  SchoolConnection?
-  courses     Course[]
-  grades      Grade[]
-  assignments Assignment[]
+  courses           Course[]
+  grades            Grade[]
+  assignments       Assignment[]
+  posts             Post[]
+  comments          SocialComment[]
+  likes             SocialLike[]
+  followers         Follow[]   @relation("Following")
+  following         Follow[]   @relation("Follower")
 }
 
 model StudentProfile {
@@ -115,4 +119,61 @@ model ComplianceAuditLog {
   timestamp    DateTime @default(now())
 
   @@index([userId, timestamp])
+}
+
+model Post {
+  id        Int         @id @default(autoincrement())
+  authorId  Int
+  body      String
+  course    String?
+  subject   String?
+  grade     String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  author    User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  comments  SocialComment[]
+  likes     SocialLike[]
+}
+
+model SocialComment {
+  id        Int      @id @default(autoincrement())
+  postId    Int
+  authorId  Int
+  content   String
+  createdAt DateTime @default(now())
+
+  post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@index([authorId])
+}
+
+model SocialLike {
+  id        Int      @id @default(autoincrement())
+  postId    Int
+  userId    Int
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([postId])
+  @@index([userId])
+}
+
+model Follow {
+  id          Int      @id @default(autoincrement())
+  followerId  Int
+  followingId Int
+  createdAt   DateTime @default(now())
+
+  follower  User @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
 }

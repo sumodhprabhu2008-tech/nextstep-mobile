@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import { useSchoolSession } from '../context/SchoolSessionContext'
 import LoginScreen from '../screens/LoginScreen'
 import SchoolLoginScreen from '../screens/SchoolLoginScreen'
+import SchoolSessionRestoreScreen from '../screens/SchoolSessionRestoreScreen'
 import UserAgreementScreen from '../screens/UserAgreementScreen'
 import AppNavigator from './AppNavigator'
 import { colors } from '../constants/colors'
@@ -39,9 +40,16 @@ function SplashView(): React.JSX.Element {
 export default function RootNavigator(): React.JSX.Element {
   const { token, isLoading: authLoading } = useAuth()
   const { hasSchoolSession, isLoaded: schoolLoaded } = useSchoolSession()
+  const [resumeSchoolSession, setResumeSchoolSession] = useState(false)
 
   const [hasAgreed, setHasAgreed] = useState(false)
   const [agreementLoaded, setAgreementLoaded] = useState(false)
+
+  useEffect(() => {
+    if (!hasSchoolSession) {
+      setResumeSchoolSession(false)
+    }
+  }, [hasSchoolSession])
 
   useEffect(() => {
     async function checkAgreement(): Promise<void> {
@@ -75,11 +83,21 @@ export default function RootNavigator(): React.JSX.Element {
   // Neither a NextStep JWT nor a school session — show auth flow
   if (token === null && !hasSchoolSession) return <AuthNavigator />
 
+  // A saved school session exists but the user has not resumed it yet.
+  if (token === null && hasSchoolSession && !resumeSchoolSession) {
+    return (
+      <SchoolSessionRestoreScreen
+        onContinue={() => setResumeSchoolSession(true)}
+        onUseDifferentAccount={() => setResumeSchoolSession(false)}
+      />
+    )
+  }
+
   // NextStep parent account logged in but hasn't agreed to terms
   if (token !== null && !hasAgreed) {
     return <UserAgreementScreen onAgree={() => void handleAgree()} />
   }
 
-  // Either JWT token (parent) or school session (student) — show the app
+  // Either JWT token (parent) or resumed school session — show the app
   return <AppNavigator />
 }

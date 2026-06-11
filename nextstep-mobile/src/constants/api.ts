@@ -7,9 +7,12 @@
 //   http://192.168.40.75:3001/health
 //
 // Android Emulator:
-// export const API_BASE_URL = 'http://10.0.2.2:3001/api'
+//   http://10.0.2.2:3001/api
 //
 // iOS Simulator:
-// export const API_BASE_URL = 'http://localhost:3001/api'
+//   http://localhost:3001/api
 
-export const API_BASE_URL = 'https://nextstep-backend-five.vercel.app/api'
+// Physical device or another computer on the same network:
+//   http://10.0.0.72:3001/api
+
+export const API_BASE_URL = 'http://10.0.0.72:3001/api'

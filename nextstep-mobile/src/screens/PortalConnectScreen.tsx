@@ -112,10 +112,13 @@ export default function PortalConnectScreen(): React.JSX.Element {
       return 'District URL must start with http:// or https://'
     }
     if (!user) return 'Please enter your username.'
+    if (portalType === 'HAC' && !/^[A-Za-z]\d{7}$/.test(user)) {
+      return 'HAC username must be one letter followed by 7 digits.'
+    }
     if (!pass) return 'Please enter your password.'
     if (pass.length < 4) return 'Password seems too short — please check it.'
     return null
-  }, [districtUrl, username, password])
+  }, [districtUrl, username, password, portalType])
 
   const handleConnect = useCallback(async (): Promise<void> => {
     console.log('[PORTAL CONNECT] button pressed')

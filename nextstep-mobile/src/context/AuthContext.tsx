@@ -13,7 +13,7 @@ interface AuthContextValue {
   user: User | null
   token: string | null
   isLoading: boolean
-  login: (email: string, password: string) => Promise<void>
+  login: (email: string, password: string, studentName?: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -51,11 +51,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     void bootstrap()
   }, [])
 
-  async function login(email: string, password: string): Promise<void> {
+  async function login(email: string, password: string, studentName?: string): Promise<void> {
     const res = await fetch(`${API_BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, studentName }),
     })
 
     if (!res.ok) {

@@ -66,6 +66,13 @@ const FEATURE_OPTIONS: FeatureOption[] = [
     icon: 'calendar-outline',
     iconColor: colors.warning,
   },
+  {
+    key: 'Social',
+    label: 'Study Feed',
+    subtitle: 'Share grades, comment, and follow peers',
+    icon: 'people-outline',
+    iconColor: colors.success,
+  },
 ]
 
 const AI_CHIPS = ['Get Advice', 'Help study', 'College Requirements', 'SAT', 'High School Road-map']

@@ -24,13 +24,32 @@ import {
 import { prisma } from '../../lib/prisma'
 import { normalizeHacGrades, normalizePsGrades } from './normalizeGrades'
 
+function normalizeName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+}
+
+function namesMatch(userName: string, portalName: string): boolean {
+  const normalizedUser = normalizeName(userName)
+  const normalizedPortal = normalizeName(portalName)
+
+  if (!normalizedUser || !normalizedPortal) return false
+  if (normalizedUser === normalizedPortal) return true
+
+  const userParts = normalizedUser.split(' ')
+  return userParts.every(part => normalizedPortal.includes(part))
+}
+
 const router = Router()
 
 // ── Input schemas ──────────────────────────────────────────────────────────────
 
 const hacLoginSchema = z.object({
   baseUrl: z.string().url('baseUrl must be a valid URL'),
-  username: z.string().min(1, 'username required'),
+  username: z.string().min(1, 'username required').regex(/^[A-Za-z]\d{7}$/, 'username must be one letter followed by 7 digits'),
   password: z.string().min(1, 'password required'),
   clsessionCookie: z.string().optional(),
 })
@@ -248,6 +267,45 @@ router.post('/hac/login', async (req: AuthRequest, res: Response): Promise<void>
     console.log('[GRADES ROUTER] loginHAC success:', {
       hasSessionToken: Boolean(sessionToken),
     })
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    })
+
+    const portalInfo = await getStudentInfo(sessionToken)
+
+    if (!portalInfo.name) {
+      deleteSessionByUserId(userId)
+      res.status(400).json({
+        data: null,
+        error: {
+          code: 'HAC_VERIFICATION_FAILED',
+          message:
+            'HAC login succeeded, but the student record could not be verified. Please check your district URL and credentials.',
+        },
+      })
+      return
+    }
+
+    if (user?.name?.trim()) {
+      if (!namesMatch(user.name, portalInfo.name)) {
+        deleteSessionByUserId(userId)
+        res.status(400).json({
+          data: null,
+          error: {
+            code: 'STUDENT_NAME_MISMATCH',
+            message: `The student name entered in NextStep does not match the HAC record. HAC name: ${portalInfo.name}`,
+          },
+        })
+        return
+      }
+    } else {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { name: portalInfo.name },
+      })
+    }
 
     // Persist the CookieJar to Neon so cold-start invocations can restore the session
     const memSession = getSessionByToken(sessionToken)

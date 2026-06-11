@@ -11,6 +11,7 @@ export default function LoginScreen(): React.JSX.Element {
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [studentName, setStudentName] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -19,12 +20,16 @@ export default function LoginScreen(): React.JSX.Element {
       setError('Please enter your email and password.')
       return
     }
+    if (!studentName.trim()) {
+      setError('Please enter your student name for HAC verification.')
+      return
+    }
 
     setIsLoading(true)
     setError(null)
 
     try {
-      await login(email.trim(), password)
+      await login(email.trim(), password, studentName.trim())
       // RootNavigator re-renders automatically when token is set in AuthContext
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Login failed. Please try again.')
@@ -66,6 +71,18 @@ export default function LoginScreen(): React.JSX.Element {
           />
 
           <Input
+            label="Student name"
+            value={studentName}
+            onChangeText={(v) => { setStudentName(v); setError(null) }}
+            placeholder="Enter your full name"
+            autoCapitalize="words"
+            autoCorrect={false}
+            editable={!isLoading}
+            returnKeyType="next"
+            testID="name-input"
+          />
+
+          <Input
             label="Password"
             value={password}
             onChangeText={(v) => { setPassword(v); setError(null) }}
@@ -86,7 +103,7 @@ export default function LoginScreen(): React.JSX.Element {
           />
 
           <Text style={styles.hint}>
-            Test account: test@nextstep.com / nextstep123
+            Test account: test@nextstep.com / nextstep123 — enter your student name to verify against HAC after you connect your portal.
           </Text>
         </View>
 

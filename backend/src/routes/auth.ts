@@ -7,7 +7,11 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 const router = Router()
 
 router.post('/login', async (req: Request, res: Response): Promise<void> => {
-  const { email, password } = req.body as { email?: string; password?: string }
+  const { email, password, studentName } = req.body as {
+    email?: string
+    password?: string
+    studentName?: string
+  }
 
   if (!email || !password) {
     res.status(400).json({
@@ -27,12 +31,24 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
       return
     }
 
-    const token = jwt.sign({ sub: user.id }, process.env.JWT_SECRET!, { expiresIn: '7d' })
+    const updatedUser = studentName?.trim()
+      ? await prisma.user.update({
+          where: { id: user.id },
+          data: { name: studentName.trim() },
+        })
+      : user
+
+    const token = jwt.sign({ sub: updatedUser.id }, process.env.JWT_SECRET!, { expiresIn: '7d' })
 
     res.json({
       data: {
         token,
-        user: { id: user.id, email: user.email, name: user.name, role: user.role },
+        user: {
+          id: updatedUser.id,
+          email: updatedUser.email,
+          name: updatedUser.name,
+          role: updatedUser.role,
+        },
       },
     })
   } catch (e) {
