@@ -1,27 +1,36 @@
 {
-  "name": "my-app",
-  "version": "0.1.0",
+  "name": "nextstep-monorepo",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "build:frontend": "cd nextstep-mobile && npx expo export --platform web",
+    "build:backend": "cd backend && npm run build",
+    "postinstall": "cd backend && npx prisma generate",
+    "start": "node api/index.js"
   },
   "dependencies": {
-    "expo": "^54.0.35",
-    "next": "16.2.6",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "@anthropic-ai/sdk": "^0.102.0",
+    "@prisma/client": "^5.22.0",
+    "axios": "^1.16.1",
+    "axios-cookiejar-support": "^7.0.0",
+    "bcryptjs": "^2.4.3",
+    "cheerio": "^1.2.0",
+    "cors": "^2.8.5",
+    "csv-parse": "^5.6.0",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "tough-cookie": "^6.0.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.6",
-    "tailwindcss": "^4",
+    "@types/tough-cookie": "^4.0.5",
+    "prisma": "^5.22.0",
     "typescript": "^5"
   }
 }
