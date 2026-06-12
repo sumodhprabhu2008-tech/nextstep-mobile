@@ -202,12 +202,30 @@ function getFormAction($: cheerio.CheerioAPI, fallbackUrl: string, link: string)
     return action
   }
 
+  // Absolute path (starts with /)
   if (action.startsWith('/')) {
-    return `${link.replace(/\/$/, '')}${action}`
+    const base = link.replace(/\/+$/, '')
+    return `${base}${action}`
   }
 
-  return `${link}${action}`
+  // Relative path
+  return `${link.replace(/\/+$/, '')}/${action.replace(/^\/+/, '')}`
 }
+
+/**
+ * Get the final request URL from an axios response.
+ * Axios v1.x stores it at `response.request.responseURL`.
+ */
+function getResponseUrl(res: { request?: { responseURL?: string; res?: { responseUrl?: string } } }): string | undefined {
+  // Axios v1.x
+  if (res.request?.responseURL) return res.request.responseURL
+  // Axios v0.x legacy (some versions)
+  if (res.request?.res?.responseUrl) return res.request.res.responseUrl
+  return undefined
+}
+
+// Known HAC auth cookie names across different district implementations
+const HAC_AUTH_COOKIES = ['.ASPXAUTH', 'ASP.NET_SessionId', 'HAC_AUTH', '.HACAUTH', 'AuthToken', 'SESSIONID']
 
 // ── Auth ───────────────────────────────────────────────────────────────────────
 
@@ -254,7 +272,7 @@ export async function loginHAC(
 
     console.log('[HAC CLIENT] Login page fetched', {
       status: res.status,
-      finalUrl: res.request?.res?.responseUrl,
+      finalUrl: getResponseUrl(res) ?? loginPageUrl,
       htmlLength: typeof res.data === 'string' ? res.data.length : 0,
     })
 
@@ -330,8 +348,7 @@ export async function loginHAC(
       validateStatus: status => status >= 200 && status < 500,
     })
 
-    const postFinalUrl: string =
-      (postRes.request as { res?: { responseUrl?: string } })?.res?.responseUrl ?? loginPostUrl
+    const postFinalUrl: string = getResponseUrl(postRes) ?? loginPostUrl
     const postHtml = postRes.data as string
     const $post = cheerio.load(postHtml)
     const postTitle = $post('title').text().trim()
@@ -378,16 +395,30 @@ export async function loginHAC(
       throw new Error('Invalid credentials — HAC rejected the username or password')
     }
 
-    // If the POST response still shows a login form and no auth cookie, fail fast.
+    // Check for auth cookies across multiple domain variations
     const hacDomainCheck = link.replace(/\/$/, '')
     const cookiesAfterPost = jar.getCookiesSync(hacDomainCheck)
-    const hasAuthCookie = cookiesAfterPost.some(c => c.key === '.ASPXAUTH')
+    let hasAuthCookie = hasAuthCookieCheck(jar, hacDomainCheck)
 
-    if (!hasAuthCookie && (postHasLoginForm || postUrlLooksLikeLogin || postTitle.includes('login'))) {
+    // Also check parent domain (cookie may be set on parent domain)
+    if (!hasAuthCookie) {
+      try {
+        const urlObj = new URL(hacDomainCheck)
+        const parentDomain = urlObj.hostname.replace(/^[^.]+\./, '.')
+        if (parentDomain !== urlObj.hostname) {
+          const parentCheck = `${urlObj.protocol}//${urlObj.hostname.replace(/^[^.]+\./, '')}`
+          hasAuthCookie = hasAuthCookieCheck(jar, parentCheck) || hasAuthCookie
+        }
+      } catch {
+        // ignore URL parse errors
+      }
+    }
+
+    if (!hasAuthCookie && (postHasLoginForm || postUrlLooksLikeLogin || postTitleLowered.includes('login'))) {
       throw new Error('Invalid credentials — HAC rejected the username or password')
     }
 
-    console.log('[HAC CLIENT] Cookies after POST:', cookiesAfterPost.map(c => c.key))
+    console.log('[HAC CLIENT] Cookies after POST:', cookiesAfterPost.map(c => `${c.key}=${c.value?.slice(0, 10)}...`))
 
     if (!hasAuthCookie) {
       // No auth cookie — login failed. Double-check via Home.aspx content as fallback.
@@ -399,7 +430,7 @@ export async function loginHAC(
       const homeBody = homeRes.data as string
       const $home = cheerio.load(homeBody)
       const homeHasLoginForm = $home("input[name='__RequestVerificationToken']").length > 0
-      const homeHasAuthCookie = jar.getCookiesSync(hacDomainCheck).some(c => c.key === '.ASPXAUTH')
+      const homeHasAuthCookie = hasAuthCookieCheck(jar, hacDomainCheck)
       const loweredHomeBody = homeBody.toLowerCase()
       const homeIsMkcSso =
         loweredHomeBody.includes('mykaty cloud') ||
@@ -442,7 +473,7 @@ export async function loginHAC(
 
   const hacDomain = link.replace(/\/$/, '')
   const allCookies = jar.getCookiesSync(hacDomain)
-  console.log('[HAC CLIENT] Cookies in jar after login:', allCookies.map(c => c.key))
+  console.log('[HAC CLIENT] Cookies in jar after login:', allCookies.map(c => `${c.key}=${c.value?.slice(0, 10)}...`))
 
   const sessionToken = saveSession(userId, 'HAC', link, serializeJar(jar))
 
@@ -452,6 +483,14 @@ export async function loginHAC(
   })
 
   return sessionToken
+}
+
+/**
+ * Check if the cookie jar has any known HAC auth cookie for the given domain.
+ */
+function hasAuthCookieCheck(jar: CookieJar, domain: string): boolean {
+  const cookies = jar.getCookiesSync(domain)
+  return HAC_AUTH_COOKIES.some(authCookie => cookies.some(c => c.key === authCookie))
 }
 
 // ── Data fetchers ──────────────────────────────────────────────────────────────

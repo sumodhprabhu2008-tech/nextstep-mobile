@@ -49,7 +49,7 @@ const router = Router()
 
 const hacLoginSchema = z.object({
   baseUrl: z.string().url('baseUrl must be a valid URL'),
-  username: z.string().min(1, 'username required').regex(/^[A-Za-z]\d{7}$/, 'username must be one letter followed by 7 digits'),
+  username: z.string().min(1, 'username required'),
   password: z.string().min(1, 'password required'),
   clsessionCookie: z.string().optional(),
 })

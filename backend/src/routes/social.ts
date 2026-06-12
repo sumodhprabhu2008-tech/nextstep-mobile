@@ -4,7 +4,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
 
-const RECENT_POST_THRESHOLD_MS = 24 * 60 * 60 * 1000
+const RECENT_POST_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000
 
 router.get('/feed', requireAuth, async (req: AuthRequest, res) => {
   if (req.userId === undefined) {
