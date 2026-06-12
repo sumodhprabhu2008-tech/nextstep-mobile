@@ -41,3 +41,7 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# expo export output
+dist/
+nextstep-mobile/dist/

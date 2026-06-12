@@ -15,4 +15,6 @@
 // Physical device or another computer on the same network:
 //   http://10.0.0.72:3001/api
 
-export const API_BASE_URL = 'http://10.0.0.72:3001/api'
+// In production (Vercel), use the Vercel deployment URL.
+// The backend lives alongside the frontend, so we use a relative path.
+export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? '/api'
